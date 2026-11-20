@@ -1,0 +1,18 @@
+# dependencies and build output
+node_modules/
+dist/
+coverage/
+
+# local environment (secrets never committed; see .env.example)
+.env
+.env.*
+!.env.example
+
+# OS and editor files
+.DS_Store
+*.log
+
+# local agent and tool state
+.superpowers/
+.claude/settings.local.json
+postman/**/*.collection-run-*.yaml

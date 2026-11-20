@@ -33,7 +33,7 @@ CLAUDE.md asks for the latest stable TypeScript, which is 7.0.2 (published 2026-
 - `@nestjs/cli@12.0.15` itself depends on `typescript ~6.0.2`,
 - `typescript-eslint@8.73.0` requires `typescript >=4.8.4 <6.1.0`, and `ts-jest@29.4.15` requires `<7`.
 
-We also skip `@nestjs/cli`: `tsc` builds the app, and dropping it removes an install script (`@parcel/watcher`) that npm flags. Trial install with the versions above plus the two overrides: `npm audit` → 0 vulnerabilities; Jest with coverage and `tsc --noEmit` both run.
+We also skip `@nestjs/cli`: `tsc` builds the app, so it is one dependency fewer. (npm still flags one install script, `@parcel/watcher`, which comes from Jest's `jest-haste-map`, not the Nest CLI. npm does not run it; Jest works without it, it is only used for watch mode.) Trial install with the versions above plus the two overrides: `npm audit` → 0 vulnerabilities; Jest with coverage and `tsc --noEmit` both run.
 
 ## File Structure
 

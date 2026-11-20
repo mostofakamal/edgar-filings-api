@@ -1,0 +1,9 @@
+# Prettier formats code only. Docs and owner files are formatted by hand.
+*.md
+docs/
+.claude/
+settings.json
+package-lock.json
+dist/
+coverage/
+postman/
