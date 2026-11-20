@@ -1,0 +1,13 @@
+node_modules
+dist
+coverage
+.git
+.superpowers
+.claude
+.env
+.env.*
+*.pdf
+settings.json
+docs
+test
+postman
