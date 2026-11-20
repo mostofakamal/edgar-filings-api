@@ -493,6 +493,12 @@ Bad input lists each problem:
 | 503 | `/problems/data-unavailable` | Data needed for the answer has not loaded yet. Sent with `Retry-After: <REFRESH_INTERVAL_SECONDS>` |
 | 500 | `/problems/internal-error` | Bug. Details are logged, never returned |
 
+Fixed `title` per `type`: `invalid-parameter` "Invalid request parameter", `invalid-cursor`
+"Invalid cursor", `date-out-of-range` "Date out of range", `company-not-found` "Company not
+found", `filing-not-found` "Filing not found", `not-found` "Not found", `data-unavailable`
+"Data unavailable", `internal-error` "Internal error". For a bad accession number in the
+path, `errors` names the parameter `accessionNumber`.
+
 ## 9. How data gets loaded
 
 ### 9.1 Full load (startup, and retry of a failed company)

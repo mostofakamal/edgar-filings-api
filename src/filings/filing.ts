@@ -44,13 +44,20 @@ export function toFiling(
   };
 }
 
+/** The sort key: [filingDate, acceptanceDateTime, accessionNumber]. */
+export type SortKey = [string, string, string];
+
+export function sortKeyOf(f: Filing): SortKey {
+  return [f.filingDate, f.acceptanceDateTime, f.accessionNumber];
+}
+
 /** Newest first: filingDate, then acceptanceDateTime, then accessionNumber, all descending (spec §7.2). */
+export function compareSortKeys(a: SortKey, b: SortKey): number {
+  return desc(a[0], b[0]) || desc(a[1], b[1]) || desc(a[2], b[2]);
+}
+
 export function compareFilings(a: Filing, b: Filing): number {
-  return (
-    desc(a.filingDate, b.filingDate) ||
-    desc(a.acceptanceDateTime, b.acceptanceDateTime) ||
-    desc(a.accessionNumber, b.accessionNumber)
-  );
+  return compareSortKeys(sortKeyOf(a), sortKeyOf(b));
 }
 
 function desc(a: string, b: string): number {

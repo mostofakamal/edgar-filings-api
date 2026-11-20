@@ -77,7 +77,8 @@ src/
   filings/filings.store.ts     FilingsStore, InMemoryFilingsStore, CompanyState, isReady()
   filings/refresh.scheduler.ts RefreshScheduler
   filings/cursor.ts            encodeCursor(), decodeCursor()
-  filings/query.service.ts     parseListQuery(), listFilings(), findFiling()
+  filings/query.ts             parseListQuery(), listFilings(), findFiling() (pure)
+  filings/query.service.ts     FilingsQueryService (check order, wraps query.ts)
   filings/companies.controller.ts, filings/filings.controller.ts
   health/health.controller.ts
   common/problem.ts            Problem, problem factories
@@ -256,17 +257,17 @@ Inputs the spec implies but no task's main tests exercise; each line has a test 
 ### Task 6: Query service and cursor
 
 **Files:**
-- Create: `src/common/problem.ts`, `src/filings/cursor.ts`, `src/filings/query.service.ts`
+- Create: `src/common/problem.ts`, `src/filings/cursor.ts`, `src/filings/query.ts`, `src/filings/query.service.ts`
 - Test: `test/unit/cursor.spec.ts`, `test/unit/query.spec.ts`
 
 **Interfaces:**
 - Consumes: `Filing`, `compareFilings` (Task 3); `StoreState`, `CompanyState` (Task 5); `CORE_FORMS`, `COMPANIES` (Task 1).
 - Produces:
-  - `class Problem extends Error { constructor(status: number, type: string, title: string, detail: string, errors?: { parameter: string; detail: string }[], retryAfterSeconds?: number) }` and factories `invalidParameter(errors)`, `invalidCursor(detail)`, `dateOutOfRange(detail)`, `companyNotFound(ticker)`, `filingNotFound(filingsSince)`, `dataUnavailable(retryAfterSeconds)` with the exact `type`/`title`/`detail` texts from §8 and §7.3.
-  - `interface ListQuery { forms: string[] | null; filedFrom: string | null; filedTo: string | null; limit: number; cursor: string | null }`
+  - `class Problem extends Error { constructor(status: number, type: string, title: string, detail: string, errors?: { parameter: string; detail: string }[], retryAfterSeconds?: number) }` and factories `invalidParameter(errors)`, `invalidCursor(detail)`, `dateOutOfRange(detail)`, `companyNotFound(ticker)`, `filingNotFound(accession, filingsSince)`, `dataUnavailable(detail, retryAfterSeconds)` with the exact `type`/`title`/`detail` texts from §8 and §7.3.
+  - `interface ListQuery { forms: string[] | null; filedFrom: string | null; filedTo: string | null; limit: number; cursor: DecodedCursor | null }` — the cursor is decoded and checked in `parseListQuery`, so a broken cursor is a parameter error (400) before the ticker check; `listFilings` compares its filters.
   - `parseListQuery(query: Record<string, unknown>, filingsSince: string): ListQuery` — throws `Problem`; all parameter problems in one `invalidParameter`; date-out-of-range after format checks.
   - `encodeCursor(k: [string, string, string], f: CursorFilters): string`, `decodeCursor(s: string): { k: [string, string, string]; f: CursorFilters }` with `interface CursorFilters { t: Ticker; forms: string[] | null; from: string | null; to: string | null }`.
-  - `listFilings(filings: readonly Filing[], ticker: Ticker, q: ListQuery): { data: Filing[]; nextCursor: string | null }`
+  - `listFilings(filings: readonly Filing[], ticker: Ticker, q: ListQuery): { data: Filing[]; nextCursor: string | null }` — sorts a copy itself, so it does not rely on the caller's order.
   - `findFiling(state: StoreState, accession: string, filingsSince: string, retryAfterSeconds: number): Filing` — throws `invalidParameter`, `dataUnavailable` or `filingNotFound` per §7.3.
   - `@Injectable() class FilingsQueryService { constructor(@Inject(FILINGS_STORE) store: FilingsStore, @Inject(APP_CONFIG) cfg: AppConfig); getCompany(ticker: string): { company: Company; dataAsOf: string }; listCompanyFilings(ticker: string, query: Record<string, unknown>): { data: Filing[]; nextCursor: string | null; limit: number; dataAsOf: string }; getFiling(accession: string): { filing: Filing; dataAsOf: string } }` — applies the §7 check order (params → ticker → readiness → lookup) on top of the pure functions above; controllers call only this service.
   - Test: `test/unit/query.service.spec.ts` builds it with an `InMemoryFilingsStore` and checks the check order (`?form=4` on `GOOG` → 400, not 404; unknown ticker while loading → 404, not 503).
