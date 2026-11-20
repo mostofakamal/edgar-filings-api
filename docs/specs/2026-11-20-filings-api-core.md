@@ -244,7 +244,7 @@ always sees one consistent state:
   - `lastError`: short text of the last failure, or `null`,
   - `nextFullLoadAt`: for `failed` companies, the earliest time to retry (§9.2),
 - one index for the whole store: accession number → filing. If two companies list the same
-  accession, the index keeps the first by ticker order and the loader logs a warning.
+  accession, the index keeps the first by ticker order and the store logs a warning.
 
 ## 7. API contract
 
@@ -555,6 +555,10 @@ fixed interval), the scheduler runs the loader again. For each company in ticker
 - **If a refresh fails** (download, check), the company keeps its last good data and its
   old `dataAsOf`, `status` becomes `stale` (or stays `failed`), and `lastError` is set.
   Other companies are not affected.
+- **If loading a company throws an unexpected error** (a bug, not a SEC or data error), it is
+  logged at `error` level, the company keeps its last good data, its `status` becomes
+  `stale` (or `failed`) with `lastError: "internal error"`, and the run continues with the
+  next company.
 - **If SEC answers 429 or 403**, the loader stops the whole run at once: companies not yet
   reached keep their current state. The next run starts after the refresh interval or
   SEC's `Retry-After` header, whichever is longer. A 403 is logged at `error` level as
