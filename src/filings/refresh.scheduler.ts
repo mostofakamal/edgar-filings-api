@@ -36,8 +36,9 @@ type SchedulerConfig = Pick<
 >;
 
 /**
- * Runs the loader at startup and then on a timer (spec §9.2). Each run starts
- * REFRESH_INTERVAL_SECONDS after the previous one finished, so runs never overlap.
+ * Runs the loader at startup and then on a timer (spec §9.2), and writes each company's
+ * result into the store. Each run starts REFRESH_INTERVAL_SECONDS after the previous one
+ * finished (or after SEC's Retry-After), so runs never overlap.
  */
 @Injectable()
 export class RefreshScheduler implements OnApplicationBootstrap, OnModuleDestroy {
@@ -72,7 +73,7 @@ export class RefreshScheduler implements OnApplicationBootstrap, OnModuleDestroy
     this.timer = null;
   }
 
-  /** One pass over the companies in ticker order. Never throws. */
+  /** One pass over the companies in ticker order. Errors are caught per company; loop() guards the rest. */
   async runOnce(): Promise<{ nextDelayMs: number }> {
     const intervalMs = this.cfg.refreshIntervalSeconds * 1000;
     let nextDelayMs = intervalMs;

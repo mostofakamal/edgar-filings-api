@@ -11,7 +11,7 @@ export interface CompanyState {
   status: CompanyStatus;
   company: Company | null;
   filings: readonly Filing[];
-  /** When this company's `recent` file was last downloaded successfully (UTC). */
+  /** When the last successful load or refresh started, i.e. its `recent` download began (UTC). */
   dataAsOf: string | null;
   lastError: string | null;
   /** For failed companies: earliest time (epoch ms) to try the full load again. */
