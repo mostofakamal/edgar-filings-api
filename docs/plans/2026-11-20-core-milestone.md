@@ -213,7 +213,7 @@ Inputs the spec implies but no task's main tests exercise; each line has a test 
 **Interfaces:**
 - Consumes: `SecClient.getJson` shape, `SecError` (Task 2); adapter and `toFiling`, `compareFilings` (Task 3).
 - Produces:
-  - `mergeRefresh(old: Filing[], fresh: Filing[], recentOldest: string): Filing[]` — returns `fresh` + every `old` filing with `filingDate <= recentOldest` whose accession is not in `fresh`, sorted with `compareFilings`.
+  - `mergeRefresh(old: readonly Filing[], fresh: readonly Filing[], recentOldest: string | null): Filing[]` — returns `fresh` + every `old` filing with `filingDate <= recentOldest` whose accession is not in `fresh`, sorted with `compareFilings`. When `recentOldest` is `null` (SEC's `recent` file had no rows), every old filing not in `fresh` is kept.
   - `type LoadResult = { ok: true; company: Company; filings: Filing[]; requests: number } | { ok: false; error: SecError | SecDataError; requests: number }`
   - `@Injectable() class Loader { constructor(@Inject(SEC_SOURCE) source: SecSource, @Inject(APP_CONFIG) cfg: Pick<AppConfig, 'filingsSince' | 'secArchivesBaseUrl'>, @Inject(APP_LOGGER) log: AppLogger); fullLoad(ticker: Ticker): Promise<LoadResult>; refresh(ticker: Ticker, previous: Filing[]): Promise<LoadResult> }`
   - `class FakeSecClient implements SecSource`, `constructor(files: Record<string, unknown | SecError>)`: `getJson` returns or throws the entry, throws `Error('unexpected SEC request: <name>')` for anything else, and records `calls: string[]`.
@@ -223,7 +223,7 @@ Inputs the spec implies but no task's main tests exercise; each line has a test 
   - loader `fullLoad`: `does not fetch overflow files when recent already reaches before FILINGS_SINCE` (AAPL: calls = `['CIK0000320193.json']`); `fetches overflow files newest first and stops after the first one older than FILINGS_SINCE` (GS: 3 calls in order); `stops when the overflow list ends`; `keeps only core forms with filingDate >= FILINGS_SINCE`; `fails and returns no filings if any file fails` (second overflow throws `SecError('network')`); `fails on adapter rejection`; `company exchange is the exchange at our ticker's index, or null`; `logs a warning when SEC's tickers list does not contain our ticker, and still loads` (§6; pass a logger spy as the `APP_LOGGER` constructor argument).
   - loader `refresh`: `fetches only the submissions file`; `applies the core-form and FILINGS_SINCE filter to fresh rows` (use `filingsSince` later than the recent file's oldest row; old-window rows must not appear).
 - [ ] **Step 2: Run** → FAIL: modules not found.
-- [ ] **Step 3: Implement.** `fullLoad` dedupes across files by accession with the `recent` row winning, then sorts. `refresh` filters fresh rows, then `mergeRefresh(previous, fresh, parsed.oldestFilingDate ?? filingsSince)`.
+- [ ] **Step 3: Implement.** `fullLoad` dedupes across files by accession with the `recent` row winning, then sorts. `refresh` filters fresh rows, then `mergeRefresh(previous, fresh, parsed.oldestFilingDate)`.
 - [ ] **Step 4: Run** → PASS; full done check.
 - [ ] **Step 5: Ask owner, then commit** `feat(filings): add loader with overflow stop rule and refresh merge`.
 

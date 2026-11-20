@@ -531,6 +531,9 @@ fixed interval), the scheduler runs the loader again. For each company in ticker
   > Let `R` be the oldest `filingDate` in the **new** `recent` file.
   > `new` = core rows from the new `recent` file with `filingDate` ≥ `FILINGS_SINCE`.
   > Result = `new` + every old row with `filingDate` ≤ `R` whose accession is not in `new`.
+  >
+  > If the new `recent` file has no rows at all, there is no `R` and no evidence that
+  > anything was removed: Result = `new` + every old row whose accession is not in `new`.
 
   So rows dated after `R` come only from SEC's current `recent` file, which means
   removals and corrections there show up. Older rows are kept from our previous data: they
