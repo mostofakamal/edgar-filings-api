@@ -435,7 +435,9 @@ Not versioned. They are for our infrastructure, not customers.
 | `GET /health/live` | the process is running | never |
 | `GET /health/ready` | the service is ready (§9.4) | not ready yet |
 
-Both status codes return the same body shape. Top-level `status` is `ready` or `loading`;
+`/health/live` returns `{ "status": "live" }`. For `/health/ready`, both status codes return
+the same body shape (not problem+json: it is read by infrastructure, not customers).
+Top-level `status` is `ready` or `loading`;
 each company's `status` is `not_loaded`, `failed`, `loaded` or `stale`.
 
 ```json
@@ -491,6 +493,7 @@ Bad input lists each problem:
 | 404 | `/problems/filing-not-found` | No filing with that accession number in our data (§7.3) |
 | 404 | `/problems/not-found` | Unknown path |
 | 503 | `/problems/data-unavailable` | Data needed for the answer has not loaded yet. Sent with `Retry-After: <REFRESH_INTERVAL_SECONDS>` |
+| 400 | `/problems/invalid-parameter` | Any other client error the framework detects before our code runs (e.g. a malformed URL), with `errors: []` |
 | 500 | `/problems/internal-error` | Bug. Details are logged, never returned |
 
 Fixed `title` per `type`: `invalid-parameter` "Invalid request parameter", `invalid-cursor`
