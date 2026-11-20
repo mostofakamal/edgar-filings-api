@@ -793,20 +793,26 @@ the Postman run (§11.2) passes against a locally running service.
 A Postman collection that checks the running API from the outside, the way a customer
 would. It lives in the repo next to the code:
 
-- `postman/collections/filings-api/`: the collection, in Postman's v3 file format, with one
-  folder per endpoint (Companies, Filings list, Filing by accession, Health),
-- `postman/environments/`: a `local` environment with `baseUrl = http://localhost:3000`.
+- `postman/filings-api.postman_collection.json`: the collection, in Postman's v2.1 JSON
+  format (importable into the Postman app), with one folder per endpoint (Health,
+  Companies, Filings list, Filing by accession),
+- `postman/local.environment.json`: a `local` environment with
+  `baseUrl = http://localhost:3000`.
+
+Owner decision (2026-11-20): JSON files rather than the v3 YAML layout. Note that
+`postman collection lint` checks only v3 collections, so the JSON collection is checked by
+running it; `postman environment lint` does check the environment file.
 
 It runs against a real service started with a real `SEC_USER_AGENT`, so it uses live SEC
 data. It is not part of `npm test`, which never calls SEC. Run it with the Postman CLI
 (checked: version 1.73.0), no login needed for local files:
 
 ```sh
-postman collection run postman/collections/filings-api -e postman/environments/<local environment file>
+postman collection run postman/filings-api.postman_collection.json -e postman/local.environment.json
 ```
 
-The exact environment file name follows the v3 layout and is fixed when the collection is
-built. The README gives the final command.
+If the service listens on another port, override the base URL:
+`--env-var baseUrl=http://localhost:<port>`.
 
 Assertions come from this spec, not from whatever the code returns. They use only facts
 that cannot change, such as filing `0000320193-24-000081` from 2024, never "the latest

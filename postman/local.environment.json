@@ -1,0 +1,13 @@
+{
+  "id": "83e26aed-86ba-5968-85a6-3db7fe1d186d",
+  "name": "local",
+  "values": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000",
+      "type": "default",
+      "enabled": true
+    }
+  ],
+  "_postman_variable_scope": "environment"
+}

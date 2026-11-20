@@ -1,0 +1,948 @@
+{
+  "info": {
+    "_postman_id": "140b3430-9336-5467-8a1c-75447b684fe8",
+    "name": "EDGAR Filings API",
+    "description": "Checks the running API against docs/specs/2026-11-20-filings-api-core.md (§7, §8, §11.2). Run against a ready service with live SEC data.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Spec §8: every error is application/problem+json with the five fields.",
+          "const code = pm.response.code;",
+          "if (code >= 400) {",
+          "  pm.test(`[${code}] error is problem+json with type, title, status, detail, instance`, () => {",
+          "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+          "    const p = pm.response.json();",
+          "    ['type', 'title', 'detail', 'instance'].forEach((k) => pm.expect(p[k], k).to.be.a('string'));",
+          "    pm.expect(p.status).to.equal(code);",
+          "    pm.expect(p.type).to.match(/^\\/problems\\/[a-z-]+$/);",
+          "  });",
+          "  if (code === 503) {",
+          "    pm.test('503 carries Retry-After', () => pm.expect(pm.response.headers.get('Retry-After')).to.match(/^\\d+$/));",
+          "  }",
+          "}"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "walkSeen",
+      "value": ""
+    },
+    {
+      "key": "walkLastKey",
+      "value": ""
+    },
+    {
+      "key": "walkCursor",
+      "value": ""
+    },
+    {
+      "key": "firstPageCursor",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "description": "Runs first: the other folders need a ready service.",
+      "item": [
+        {
+          "name": "live",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('live is 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health/live",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "health",
+                "live"
+              ]
+            }
+          }
+        },
+        {
+          "name": "ready",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('ready is 200 with status ready', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().status).to.equal('ready');",
+                  "});",
+                  "pm.test('lists all six companies with a known status', () => {",
+                  "  const companies = pm.response.json().companies;",
+                  "  pm.expect(Object.keys(companies).sort()).to.eql(['AAPL', 'AMZN', 'GOOGL', 'GS', 'META', 'NFLX']);",
+                  "  Object.values(companies).forEach((c) => pm.expect(['not_loaded', 'failed', 'loaded', 'stale']).to.include(c.status));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health/ready",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "health",
+                "ready"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Companies",
+      "description": "GET /v1/companies/{ticker} (spec §7.1).",
+      "item": [
+        {
+          "name": "AAPL",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with the AAPL company', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const d = pm.response.json().data;",
+                  "  pm.expect(d.ticker).to.equal('AAPL');",
+                  "  pm.expect(d.cik).to.equal('0000320193');",
+                  "  pm.expect(d.name).to.be.a('string');",
+                  "  pm.expect(d.filingsAvailableFrom).to.match(/^\\d{4}-\\d{2}-\\d{2}$/);",
+                  "});",
+                  "pm.test('meta.dataAsOf is a UTC date-time', () => {",
+                  "  pm.expect(pm.response.json().meta.dataAsOf).to.match(/^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$/);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/companies/AAPL",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "companies",
+                "AAPL"
+              ]
+            }
+          }
+        },
+        {
+          "name": "aapl lower case",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with the AAPL company', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const d = pm.response.json().data;",
+                  "  pm.expect(d.ticker).to.equal('AAPL');",
+                  "  pm.expect(d.cik).to.equal('0000320193');",
+                  "  pm.expect(d.name).to.be.a('string');",
+                  "  pm.expect(d.filingsAvailableFrom).to.match(/^\\d{4}-\\d{2}-\\d{2}$/);",
+                  "});",
+                  "pm.test('meta.dataAsOf is a UTC date-time', () => {",
+                  "  pm.expect(pm.response.json().meta.dataAsOf).to.match(/^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$/);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/companies/aapl",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "companies",
+                "aapl"
+              ]
+            }
+          }
+        },
+        {
+          "name": "GOOG not supported",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 company-not-found listing the supported tickers', () => {",
+                  "  pm.response.to.have.status(404);",
+                  "  const p = pm.response.json();",
+                  "  pm.expect(p.type).to.equal('/problems/company-not-found');",
+                  "  pm.expect(p.detail).to.include('AAPL, AMZN, GOOGL, GS, META, NFLX');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/companies/GOOG",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "companies",
+                "GOOG"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Filings list",
+      "description": "GET /v1/companies/{ticker}/filings (spec §7.2).",
+      "item": [
+        {
+          "name": "default page",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const keyOf = (f) => [f.filingDate, f.acceptanceDateTime, f.accessionNumber];",
+                  "const newerOrEqual = (a, b) => {",
+                  "  for (let i = 0; i < 3; i++) { if (a[i] !== b[i]) return a[i] > b[i]; }",
+                  "  return true;",
+                  "};",
+                  "",
+                  "pm.test('200 with at most 20 rows, newest first', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.page.limit).to.equal(20);",
+                  "  pm.expect(body.data.length).to.be.at.most(20);",
+                  "  for (let i = 1; i < body.data.length; i++) {",
+                  "    pm.expect(newerOrEqual(keyOf(body.data[i - 1]), keyOf(body.data[i])), `row ${i} order`).to.equal(true);",
+                  "  }",
+                  "});",
+                  "pm.test('every row has the contract fields and only core forms', () => {",
+                  "  const core = ['10-K', '10-K/A', '10-Q', '10-Q/A', '8-K', '8-K/A'];",
+                  "  pm.response.json().data.forEach((f) => {",
+                  "    pm.expect(f.ticker).to.equal('AAPL');",
+                  "    pm.expect(core).to.include(f.form);",
+                  "    pm.expect(f.accessionNumber).to.match(/^\\d{10}-\\d{2}-\\d{6}$/);",
+                  "    pm.expect(f.filingDate >= '2021-01-01').to.equal(true);",
+                  "    pm.expect(f.acceptanceDateTime).to.match(/^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$/);",
+                  "    if (f.primaryDocumentUrl !== null) pm.expect(f.primaryDocumentUrl).to.match(/^https:\\/\\/www\\.sec\\.gov\\/Archives\\/edgar\\/data\\/320193\\//);",
+                  "  });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/companies/AAPL/filings",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "companies",
+                "AAPL",
+                "filings"
+              ]
+            }
+          }
+        },
+        {
+          "name": "form 10-K only",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('only 10-K rows', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const data = pm.response.json().data;",
+                  "  pm.expect(data.length).to.be.above(0);",
+                  "  data.forEach((f) => pm.expect(f.form).to.equal('10-K'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/companies/AAPL/filings?form=10-K",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "companies",
+                "AAPL",
+                "filings"
+              ],
+              "query": [
+                {
+                  "key": "form",
+                  "value": "10-K"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "date range 2024",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('every filingDate is inside 2024 (inclusive)', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const data = pm.response.json().data;",
+                  "  pm.expect(data.length).to.be.above(0);",
+                  "  data.forEach((f) => pm.expect(f.filingDate >= '2024-01-01' && f.filingDate <= '2024-12-31', f.filingDate).to.equal(true));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/companies/AAPL/filings?filedFrom=2024-01-01&filedTo=2024-12-31",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "companies",
+                "AAPL",
+                "filings"
+              ],
+              "query": [
+                {
+                  "key": "filedFrom",
+                  "value": "2024-01-01"
+                },
+                {
+                  "key": "filedTo",
+                  "value": "2024-12-31"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "cursor walk page 1",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('walkSeen', '[]');",
+                  "pm.collectionVariables.set('walkLastKey', 'null');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const keyOf = (f) => [f.filingDate, f.acceptanceDateTime, f.accessionNumber];",
+                  "const newerOrEqual = (a, b) => {",
+                  "  for (let i = 0; i < 3; i++) { if (a[i] !== b[i]) return a[i] > b[i]; }",
+                  "  return true;",
+                  "};",
+                  "",
+                  "const body = pm.response.json();",
+                  "const seen = JSON.parse(pm.collectionVariables.get('walkSeen') || '[]');",
+                  "const lastKey = JSON.parse(pm.collectionVariables.get('walkLastKey') || 'null');",
+                  "pm.test('200 with 5 rows and a next cursor', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(body.data.length).to.equal(5);",
+                  "  pm.expect(body.page.nextCursor).to.be.a('string');",
+                  "});",
+                  "pm.test('no accession repeats across pages', () => {",
+                  "  body.data.forEach((f) => pm.expect(seen, f.accessionNumber).to.not.include(f.accessionNumber));",
+                  "});",
+                  "pm.test('order continues from the previous page', () => {",
+                  "  if (lastKey) pm.expect(newerOrEqual(lastKey, keyOf(body.data[0]))).to.equal(true);",
+                  "});",
+                  "pm.collectionVariables.set('walkSeen', JSON.stringify(seen.concat(body.data.map((f) => f.accessionNumber))));",
+                  "pm.collectionVariables.set('walkLastKey', JSON.stringify(keyOf(body.data[body.data.length - 1])));",
+                  "pm.collectionVariables.set('walkCursor', body.page.nextCursor || '');",
+                  "pm.collectionVariables.set('firstPageCursor', body.page.nextCursor || '');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/companies/AAPL/filings?limit=5",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "companies",
+                "AAPL",
+                "filings"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "5"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "cursor walk page 2",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const keyOf = (f) => [f.filingDate, f.acceptanceDateTime, f.accessionNumber];",
+                  "const newerOrEqual = (a, b) => {",
+                  "  for (let i = 0; i < 3; i++) { if (a[i] !== b[i]) return a[i] > b[i]; }",
+                  "  return true;",
+                  "};",
+                  "",
+                  "const body = pm.response.json();",
+                  "const seen = JSON.parse(pm.collectionVariables.get('walkSeen') || '[]');",
+                  "const lastKey = JSON.parse(pm.collectionVariables.get('walkLastKey') || 'null');",
+                  "pm.test('200 with 5 rows and a next cursor', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(body.data.length).to.equal(5);",
+                  "  pm.expect(body.page.nextCursor).to.be.a('string');",
+                  "});",
+                  "pm.test('no accession repeats across pages', () => {",
+                  "  body.data.forEach((f) => pm.expect(seen, f.accessionNumber).to.not.include(f.accessionNumber));",
+                  "});",
+                  "pm.test('order continues from the previous page', () => {",
+                  "  if (lastKey) pm.expect(newerOrEqual(lastKey, keyOf(body.data[0]))).to.equal(true);",
+                  "});",
+                  "pm.collectionVariables.set('walkSeen', JSON.stringify(seen.concat(body.data.map((f) => f.accessionNumber))));",
+                  "pm.collectionVariables.set('walkLastKey', JSON.stringify(keyOf(body.data[body.data.length - 1])));",
+                  "pm.collectionVariables.set('walkCursor', body.page.nextCursor || '');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/companies/AAPL/filings?limit=5&cursor={{walkCursor}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "companies",
+                "AAPL",
+                "filings"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "5"
+                },
+                {
+                  "key": "cursor",
+                  "value": "{{walkCursor}}"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "cursor walk page 3",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const keyOf = (f) => [f.filingDate, f.acceptanceDateTime, f.accessionNumber];",
+                  "const newerOrEqual = (a, b) => {",
+                  "  for (let i = 0; i < 3; i++) { if (a[i] !== b[i]) return a[i] > b[i]; }",
+                  "  return true;",
+                  "};",
+                  "",
+                  "const body = pm.response.json();",
+                  "const seen = JSON.parse(pm.collectionVariables.get('walkSeen') || '[]');",
+                  "const lastKey = JSON.parse(pm.collectionVariables.get('walkLastKey') || 'null');",
+                  "pm.test('200 with 5 rows and a next cursor', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(body.data.length).to.equal(5);",
+                  "  pm.expect(body.page.nextCursor).to.be.a('string');",
+                  "});",
+                  "pm.test('no accession repeats across pages', () => {",
+                  "  body.data.forEach((f) => pm.expect(seen, f.accessionNumber).to.not.include(f.accessionNumber));",
+                  "});",
+                  "pm.test('order continues from the previous page', () => {",
+                  "  if (lastKey) pm.expect(newerOrEqual(lastKey, keyOf(body.data[0]))).to.equal(true);",
+                  "});",
+                  "pm.collectionVariables.set('walkSeen', JSON.stringify(seen.concat(body.data.map((f) => f.accessionNumber))));",
+                  "pm.collectionVariables.set('walkLastKey', JSON.stringify(keyOf(body.data[body.data.length - 1])));",
+                  "pm.collectionVariables.set('walkCursor', body.page.nextCursor || '');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/companies/AAPL/filings?limit=5&cursor={{walkCursor}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "companies",
+                "AAPL",
+                "filings"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "5"
+                },
+                {
+                  "key": "cursor",
+                  "value": "{{walkCursor}}"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "error unsupported form",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 invalid-parameter', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "  pm.expect(pm.response.json().type).to.equal('/problems/invalid-parameter');",
+                  "});",
+                  "",
+                  "pm.test('names the form parameter and lists supported forms', () => {",
+                  "  const e = pm.response.json().errors;",
+                  "  pm.expect(e[0].parameter).to.equal('form');",
+                  "  pm.expect(e[0].detail).to.include('Supported forms: 10-K, 10-K/A, 10-Q, 10-Q/A, 8-K, 8-K/A.');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/companies/AAPL/filings?form=4",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "companies",
+                "AAPL",
+                "filings"
+              ],
+              "query": [
+                {
+                  "key": "form",
+                  "value": "4"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "error before FILINGS_SINCE",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 date-out-of-range', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "  pm.expect(pm.response.json().type).to.equal('/problems/date-out-of-range');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/companies/AAPL/filings?filedFrom=2019-01-01",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "companies",
+                "AAPL",
+                "filings"
+              ],
+              "query": [
+                {
+                  "key": "filedFrom",
+                  "value": "2019-01-01"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "error filedFrom after filedTo",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 invalid-parameter', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "  pm.expect(pm.response.json().type).to.equal('/problems/invalid-parameter');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/companies/AAPL/filings?filedFrom=2024-02-01&filedTo=2024-01-01",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "companies",
+                "AAPL",
+                "filings"
+              ],
+              "query": [
+                {
+                  "key": "filedFrom",
+                  "value": "2024-02-01"
+                },
+                {
+                  "key": "filedTo",
+                  "value": "2024-01-01"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "error broken cursor",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 invalid-cursor', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "  pm.expect(pm.response.json().type).to.equal('/problems/invalid-cursor');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/companies/AAPL/filings?cursor=not-a-cursor",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "companies",
+                "AAPL",
+                "filings"
+              ],
+              "query": [
+                {
+                  "key": "cursor",
+                  "value": "not-a-cursor"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "error cursor with changed filters",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 invalid-cursor', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "  pm.expect(pm.response.json().type).to.equal('/problems/invalid-cursor');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/companies/AAPL/filings?limit=5&form=10-K&cursor={{firstPageCursor}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "companies",
+                "AAPL",
+                "filings"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "5"
+                },
+                {
+                  "key": "form",
+                  "value": "10-K"
+                },
+                {
+                  "key": "cursor",
+                  "value": "{{firstPageCursor}}"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "error unknown parameter",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 invalid-parameter', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "  pm.expect(pm.response.json().type).to.equal('/problems/invalid-parameter');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/companies/AAPL/filings?sort=asc",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "companies",
+                "AAPL",
+                "filings"
+              ],
+              "query": [
+                {
+                  "key": "sort",
+                  "value": "asc"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Filing by accession",
+      "description": "GET /v1/filings/{accessionNumber} (spec §7.3).",
+      "item": [
+        {
+          "name": "AAPL 10-Q 2024",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 equal to the spec §7.3 example', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().data).to.eql({",
+                  "    accessionNumber: '0000320193-24-000081',",
+                  "    ticker: 'AAPL',",
+                  "    cik: '0000320193',",
+                  "    form: '10-Q',",
+                  "    filingDate: '2024-08-02',",
+                  "    reportDate: '2024-06-29',",
+                  "    acceptanceDateTime: '2024-08-01T22:03:34Z',",
+                  "    primaryDocumentUrl: 'https://www.sec.gov/Archives/edgar/data/320193/000032019324000081/aapl-20240629.htm',",
+                  "  });",
+                  "});",
+                  "pm.test('meta.dataAsOf is a UTC date-time', () => {",
+                  "  pm.expect(pm.response.json().meta.dataAsOf).to.match(/^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$/);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/filings/0000320193-24-000081",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "filings",
+                "0000320193-24-000081"
+              ]
+            }
+          }
+        },
+        {
+          "name": "unknown accession",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 filing-not-found', () => {",
+                  "  pm.response.to.have.status(404);",
+                  "  pm.expect(pm.response.json().type).to.equal('/problems/filing-not-found');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/filings/0000320193-24-999999",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "filings",
+                "0000320193-24-999999"
+              ]
+            }
+          }
+        },
+        {
+          "name": "bad format",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 invalid-parameter showing the expected format', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "  const p = pm.response.json();",
+                  "  pm.expect(p.type).to.equal('/problems/invalid-parameter');",
+                  "  pm.expect(p.detail).to.include('0000320193-24-000081');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/filings/123",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "filings",
+                "123"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

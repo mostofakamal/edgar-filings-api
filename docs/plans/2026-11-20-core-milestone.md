@@ -89,8 +89,8 @@ test/
   unit/*.spec.ts
   e2e/api.e2e-spec.ts
 postman/
-  collections/filings-api/     v3 collection
-  environments/                local environment
+  filings-api.postman_collection.json   v2.1 JSON collection
+  local.environment.json                local environment
 ```
 
 ## Review Focus
@@ -285,14 +285,14 @@ Inputs the spec implies but no task's main tests exercise; each line has a test 
 ### Task 7: Postman test profile (written before the HTTP layer)
 
 **Files:**
-- Create: `postman/collections/filings-api/` (v3 collection), `postman/environments/` (local environment, `baseUrl = http://localhost:3000`)
+- Create: `postman/filings-api.postman_collection.json` (v2.1 JSON collection; owner asked for JSON instead of v3 YAML), `postman/local.environment.json` (`baseUrl = http://localhost:3000`)
 
 **Interfaces:**
 - Consumes: the contract in §7, §8 and the checks table in §11.2 (not the code).
 - Produces: a collection whose run command is recorded for the README in Task 9.
 
-- [ ] **Step 1: Load the `postman:collection-schema-v3` skill** and write the collection with one folder per endpoint (Health, Companies, Filings list, Filing by accession), each request carrying the `pm.test` assertions from §11.2. Collection-level test script: for any 4xx/5xx response, assert `Content-Type` `application/problem+json` and the five fields, with `status` equal to the HTTP status. The cursor walk stores `nextCursor` in a collection variable and checks accessions across 3 pages.
-- [ ] **Step 2: Run it with no service running** `postman collection run postman/collections/filings-api -e <environment file>` → FAIL (connection refused). This is the "test fails first" step for the HTTP layer.
+- [ ] **Step 1: Write the collection** with one folder per endpoint (Health, Companies, Filings list, Filing by accession), each request carrying the `pm.test` assertions from §11.2. Collection-level test script: for any 4xx/5xx response, assert `Content-Type` `application/problem+json` and the five fields, with `status` equal to the HTTP status. The cursor walk stores `nextCursor` in a collection variable and checks accessions across 3 pages.
+- [ ] **Step 2: Run it with no service running** `postman collection run postman/filings-api.postman_collection.json -e postman/local.environment.json` → FAIL (connection refused). This is the "test fails first" step for the HTTP layer.
 - [ ] **Step 3: Ask owner, then commit** `test(api): add Postman collection and local environment for all endpoints`.
 
 ### Task 8: HTTP layer, health, logging and bootstrap
