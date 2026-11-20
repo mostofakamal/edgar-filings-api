@@ -8,6 +8,8 @@ background; customer requests never call SEC.
 - API contract and design: [docs/specs/2026-11-20-filings-api-core.md](docs/specs/2026-11-20-filings-api-core.md)
 - What we found in SEC's data: [docs/research/sec-findings.md](docs/research/sec-findings.md)
 - What we built, skipped and would do next: [NOTES.md](NOTES.md)
+- How the work was directed and checked: [docs/prompt-log.md](docs/prompt-log.md)
+- All docs: [docs/README.md](docs/README.md)
 
 ```mermaid
 flowchart LR
