@@ -148,6 +148,12 @@ flowchart LR
 The only path to SEC starts at the scheduler. Nothing on the customer side (controllers,
 query service, health) has a reference to the SEC client or the loader.
 
+Components are wired with NestJS dependency injection. Each class receives its
+dependencies (config, logger, clock, timers, HTTP client) through its constructor, and
+depends on an interface rather than a concrete class where a replacement is plausible:
+the loader on `SecSource`, the scheduler and query service on `FilingsStore`. That is what
+makes the in-memory store swappable for a shared one (§12) and lets tests replace SEC.
+
 | Component | Job |
 |---|---|
 | **Controllers** | Parse and check request input, call the query service, shape the response. No business rules. |

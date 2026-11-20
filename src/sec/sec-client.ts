@@ -1,5 +1,7 @@
+import { Inject, Injectable } from '@nestjs/common';
 import type { AppConfig } from '../config/config';
 import type { AppLogger } from '../common/logger';
+import { APP_CONFIG, APP_LOGGER, SEC_CLIENT_DEPS } from '../common/tokens';
 
 export type SecErrorKind =
   'timeout' | 'network' | 'rate_limited' | 'forbidden' | 'http_error' | 'not_json';
@@ -14,6 +16,11 @@ export class SecError extends Error {
   ) {
     super(message);
   }
+}
+
+/** What the rest of the app needs from SEC: one raw JSON file by name. */
+export interface SecSource {
+  getJson(fileName: string): Promise<unknown>;
 }
 
 export interface SecClientDeps {
@@ -38,13 +45,14 @@ export type SecClientConfig = Pick<
 >;
 
 /** The only code that makes HTTP calls to SEC. Knows nothing about SEC's JSON shape. */
-export class SecClient {
+@Injectable()
+export class SecClient implements SecSource {
   private lastStart: number | null = null;
 
   constructor(
-    private readonly cfg: SecClientConfig,
-    private readonly deps: SecClientDeps,
-    private readonly log?: Pick<AppLogger, 'warn'>,
+    @Inject(APP_CONFIG) private readonly cfg: SecClientConfig,
+    @Inject(SEC_CLIENT_DEPS) private readonly deps: SecClientDeps,
+    @Inject(APP_LOGGER) private readonly log: Pick<AppLogger, 'warn'>,
   ) {}
 
   async getJson(fileName: string): Promise<unknown> {
@@ -55,7 +63,7 @@ export class SecClient {
       } catch (e) {
         if (!(e instanceof SecError) || !isRetryable(e) || attempt > this.cfg.secMaxRetries)
           throw e;
-        this.log?.warn({ fileName, attempt, kind: e.kind }, 'SEC request failed, retrying');
+        this.log.warn({ fileName, attempt, kind: e.kind }, 'SEC request failed, retrying');
         // Waits double: base, 2 × base, 4 × base, … each ±25%.
         const wait = this.cfg.secRetryBaseDelayMs * 2 ** (attempt - 1);
         await this.deps.sleep(wait * (1 - JITTER + this.deps.random() * 2 * JITTER));

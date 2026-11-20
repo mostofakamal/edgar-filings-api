@@ -36,6 +36,21 @@ CLAUDE.md asks for the latest stable TypeScript, which is 7.0.2 (published 2026-
 
 We also skip `@nestjs/cli`: `tsc` builds the app, so it is one dependency fewer. (npm still flags one install script, `@parcel/watcher`, which comes from Jest's `jest-haste-map`, not the Nest CLI. npm does not run it; Jest works without it, it is only used for watch mode.) Trial install with the versions above plus the two overrides: `npm audit` → 0 vulnerabilities; Jest with coverage and `tsc --noEmit` both run.
 
+### NestJS 12 is ES modules only
+
+`@nestjs/common`, `@nestjs/core`, `@nestjs/testing` and `@nestjs/platform-express` 12.6.0 have `"type": "module"`. Our code compiles to CommonJS, which Node 26 loads fine: the compiled app resolved Nest providers with plain `node`, no flags. Jest's module loader needs Node's `--experimental-vm-modules` to do the same, so the `test` and `test:e2e` scripts run Jest with that flag (and `--no-warnings=ExperimentalWarning`). Production does not use the flag.
+
+## Design Principles
+
+Owner instruction (2026-11-20): follow design principles and use dependency injection.
+
+- **Dependency injection through Nest.** Every class with dependencies is `@Injectable()` and receives them through its constructor with `@Inject(TOKEN)`. Tokens live in `src/common/tokens.ts`: `APP_CONFIG`, `APP_LOGGER`, `SEC_CLIENT_DEPS`, `SEC_SOURCE`, `FILINGS_STORE`, `SCHEDULER_DEPS`. No class reads `process.env`, creates a logger, or calls `Date.now`/`setTimeout`/`fetch` directly; they come from providers.
+- **Depend on abstractions (dependency inversion).** Consumers depend on interfaces bound to tokens, not on concrete classes: the loader on `SecSource` (`SEC_SOURCE`), the scheduler and query service on `FilingsStore` (`FILINGS_STORE`). Replacing the in-memory store with a shared one later is one provider change.
+- **One reason to change per unit (single responsibility).** Client = HTTP to SEC; adapter = SEC's JSON shape; loader = what to fetch and merge; store = state; scheduler = when; query service = filter/sort/page; controllers = HTTP in/out.
+- **Functional core.** Logic with no dependencies stays as pure functions (adapter, merge, cursor, query helpers, `toFiling`). They are tested directly and need no injection; injectable classes wrap them where Nest needs a provider.
+- **Tests replace dependencies the Nest way**: unit tests construct classes with fakes; module and E2E tests use `Test.createTestingModule(...).overrideProvider(TOKEN)`.
+- **Modules:** `AppConfigModule` (global, `APP_CONFIG`), `LoggerModule` (global, `APP_LOGGER`), `SecModule` (exports `SEC_SOURCE`), `FilingsModule` (store, loader, scheduler, query service, controllers), `HealthModule`, `AppModule` imports them all.
+
 ## File Structure
 
 ```
@@ -46,7 +61,14 @@ src/
   main.ts                      bootstrap: config, logger, scheduler start, listen
   app.module.ts                wires everything
   companies.ts                 COMPANIES, Ticker, CORE_FORMS
-  config/config.ts             loadConfig(), AppConfig, ConfigError
+  config/config.ts             loadConfig(), AppConfig, ConfigError, isRealDate()
+  config/config.module.ts      AppConfigModule (APP_CONFIG)
+  common/tokens.ts             injection tokens
+  common/logger.ts             AppLogger interface
+  common/logger.module.ts      LoggerModule (APP_LOGGER, pino)
+  sec/sec.module.ts            SecModule (SEC_CLIENT_DEPS, SecClient, SEC_SOURCE)
+  filings/filings.module.ts    FilingsModule
+  health/health.module.ts      HealthModule
   sec/sec-client.ts            SecClient, SecError
   sec/sec-adapter.ts           parseSubmissions(), parseOverflow(), SecDataError
   filings/filing.ts            Filing, Company, toFiling(), compareFilings()
@@ -123,7 +145,8 @@ Inputs the spec implies but no task's main tests exercise; each line has a test 
   - `type SecErrorKind = 'timeout' | 'network' | 'rate_limited' | 'forbidden' | 'http_error' | 'not_json'`
   - `class SecError extends Error { kind: SecErrorKind; status?: number; retryAfterSeconds?: number }`
   - `interface SecClientDeps { fetch: typeof fetch; sleep(ms: number): Promise<void>; now(): number; random(): number }`
-  - `class SecClient { constructor(cfg: Pick<AppConfig, 'secUserAgent' | 'secRequestTimeoutMs'>, deps: SecClientDeps, log?: { warn(obj: object, msg: string): void }); getJson(fileName: string): Promise<unknown> }`
+  - `interface SecSource { getJson(fileName: string): Promise<unknown> }` (what consumers depend on, token `SEC_SOURCE`)
+  - `@Injectable() class SecClient implements SecSource { constructor(@Inject(APP_CONFIG) cfg: SecClientConfig, @Inject(SEC_CLIENT_DEPS) deps: SecClientDeps, @Inject(APP_LOGGER) log: Pick<AppLogger, 'warn'>); getJson(fileName: string): Promise<unknown> }`; `SecModule` binds `SEC_SOURCE` to it (test: `test/unit/di.spec.ts`)
   - `fileName` must match `^CIK\d{10}(-submissions-\d{3})?\.json$`; otherwise `getJson` throws a plain `Error` (programming bug) without a request. URL is `https://data.sec.gov/submissions/${fileName}`.
 
 - [ ] **Step 1: Write failing tests** with a stub `fetch` and fake `sleep/now/random`:
@@ -192,12 +215,12 @@ Inputs the spec implies but no task's main tests exercise; each line has a test 
 - Produces:
   - `mergeRefresh(old: Filing[], fresh: Filing[], recentOldest: string): Filing[]` — returns `fresh` + every `old` filing with `filingDate <= recentOldest` whose accession is not in `fresh`, sorted with `compareFilings`.
   - `type LoadResult = { ok: true; company: Company; filings: Filing[]; requests: number } | { ok: false; error: SecError | SecDataError; requests: number }`
-  - `class Loader { constructor(client: { getJson(f: string): Promise<unknown> }, cfg: Pick<AppConfig, 'filingsSince' | 'secArchivesBaseUrl'>); fullLoad(ticker: Ticker): Promise<LoadResult>; refresh(ticker: Ticker, previous: Filing[]): Promise<LoadResult> }`
-  - `FakeSecClient(files: Record<string, unknown | SecError>)`: `getJson` returns or throws the entry, throws `Error('unexpected SEC request: <name>')` for anything else, and records `calls: string[]`.
+  - `@Injectable() class Loader { constructor(@Inject(SEC_SOURCE) source: SecSource, @Inject(APP_CONFIG) cfg: Pick<AppConfig, 'filingsSince' | 'secArchivesBaseUrl'>, @Inject(APP_LOGGER) log: AppLogger); fullLoad(ticker: Ticker): Promise<LoadResult>; refresh(ticker: Ticker, previous: Filing[]): Promise<LoadResult> }`
+  - `class FakeSecClient implements SecSource`, `constructor(files: Record<string, unknown | SecError>)`: `getJson` returns or throws the entry, throws `Error('unexpected SEC request: <name>')` for anything else, and records `calls: string[]`.
 
 - [ ] **Step 1: Write failing tests:**
   - merge: the three rows of the §9.2 worked example (kept, dropped, added); `a row whose filingDate moved across R appears once, with the fresh values`; `rows on day R are kept from both sides without duplicates`.
-  - loader `fullLoad`: `does not fetch overflow files when recent already reaches before FILINGS_SINCE` (AAPL: calls = `['CIK0000320193.json']`); `fetches overflow files newest first and stops after the first one older than FILINGS_SINCE` (GS: 3 calls in order); `stops when the overflow list ends`; `keeps only core forms with filingDate >= FILINGS_SINCE`; `fails and returns no filings if any file fails` (second overflow throws `SecError('network')`); `fails on adapter rejection`; `company exchange is the exchange at our ticker's index, or null`; `logs a warning when SEC's tickers list does not contain our ticker, and still loads` (§6; inject a `log.warn` spy through the constructor's optional third parameter `log?: { warn(obj: object, msg: string): void }`).
+  - loader `fullLoad`: `does not fetch overflow files when recent already reaches before FILINGS_SINCE` (AAPL: calls = `['CIK0000320193.json']`); `fetches overflow files newest first and stops after the first one older than FILINGS_SINCE` (GS: 3 calls in order); `stops when the overflow list ends`; `keeps only core forms with filingDate >= FILINGS_SINCE`; `fails and returns no filings if any file fails` (second overflow throws `SecError('network')`); `fails on adapter rejection`; `company exchange is the exchange at our ticker's index, or null`; `logs a warning when SEC's tickers list does not contain our ticker, and still loads` (§6; pass a logger spy as the `APP_LOGGER` constructor argument).
   - loader `refresh`: `fetches only the submissions file`; `applies the core-form and FILINGS_SINCE filter to fresh rows` (use `filingsSince` later than the recent file's oldest row; old-window rows must not appear).
 - [ ] **Step 2: Run** → FAIL: modules not found.
 - [ ] **Step 3: Implement.** `fullLoad` dedupes across files by accession with the `recent` row winning, then sorts. `refresh` filters fresh rows, then `mergeRefresh(previous, fresh, parsed.oldestFilingDate ?? filingsSince)`.
@@ -216,10 +239,11 @@ Inputs the spec implies but no task's main tests exercise; each line has a test 
   - `type CompanyStatus = 'not_loaded' | 'failed' | 'loaded' | 'stale'`
   - `interface CompanyState { ticker: Ticker; status: CompanyStatus; company: Company | null; filings: readonly Filing[]; dataAsOf: string | null; lastError: string | null; nextFullLoadAt: number | null }`
   - `interface StoreState { companies: ReadonlyMap<Ticker, CompanyState>; byAccession: ReadonlyMap<string, Filing>; firstPassDone: boolean }`
-  - `interface FilingsStore { get(): StoreState; setCompany(state: CompanyState): void; markFirstPassDone(): void }` and Nest token `FILINGS_STORE = Symbol('FILINGS_STORE')`.
+  - `interface FilingsStore { get(): StoreState; setCompany(state: CompanyState): void; markFirstPassDone(): void }` and Nest token `FILINGS_STORE` (add to `src/common/tokens.ts`).
   - `class InMemoryFilingsStore implements FilingsStore` — starts with all six `not_loaded`; every change builds a new frozen `StoreState`.
   - `isReady(state: StoreState): boolean` — `firstPassDone` and at least one company `loaded` or `stale`.
-  - `class RefreshScheduler { constructor(loader: Loader, store: FilingsStore, cfg: Pick<AppConfig, 'refreshIntervalSeconds' | 'failedCompanyRetrySeconds'>, deps: { now(): number; setTimeout(fn: () => void, ms: number): unknown; clearTimeout(h: unknown): void }, log: Logger); runOnce(): Promise<{ nextDelayMs: number }>; start(): void; stop(): void }`
+  - `interface SchedulerDeps { now(): number; setTimeout(fn: () => void, ms: number): unknown; clearTimeout(h: unknown): void }`, token `SCHEDULER_DEPS` (add to `tokens.ts`), default provider uses the real timers and `Date.now`.
+  - `@Injectable() class RefreshScheduler implements OnApplicationBootstrap, OnModuleDestroy { constructor(loader: Loader, @Inject(FILINGS_STORE) store: FilingsStore, @Inject(APP_CONFIG) cfg: Pick<AppConfig, 'refreshIntervalSeconds' | 'failedCompanyRetrySeconds'>, @Inject(SCHEDULER_DEPS) deps: SchedulerDeps, @Inject(APP_LOGGER) log: AppLogger); runOnce(): Promise<{ nextDelayMs: number }>; start(): void; stop(): void; onApplicationBootstrap(): void /* calls start(), not awaited */; onModuleDestroy(): void /* calls stop() */ }`
 
 - [ ] **Step 1: Write failing tests:**
   - store: `starts with six not_loaded companies and is not ready`; `get() returns the same object until a change` and `a change returns a new object` (old reference unchanged); `byAccession indexes every filing; on a duplicate accession keeps the first company in ticker order`; `isReady after first pass with one loaded company` and `not ready after first pass with none loaded`.
@@ -244,6 +268,8 @@ Inputs the spec implies but no task's main tests exercise; each line has a test 
   - `encodeCursor(k: [string, string, string], f: CursorFilters): string`, `decodeCursor(s: string): { k: [string, string, string]; f: CursorFilters }` with `interface CursorFilters { t: Ticker; forms: string[] | null; from: string | null; to: string | null }`.
   - `listFilings(filings: readonly Filing[], ticker: Ticker, q: ListQuery): { data: Filing[]; nextCursor: string | null }`
   - `findFiling(state: StoreState, accession: string, filingsSince: string, retryAfterSeconds: number): Filing` — throws `invalidParameter`, `dataUnavailable` or `filingNotFound` per §7.3.
+  - `@Injectable() class FilingsQueryService { constructor(@Inject(FILINGS_STORE) store: FilingsStore, @Inject(APP_CONFIG) cfg: AppConfig); getCompany(ticker: string): { company: Company; dataAsOf: string }; listCompanyFilings(ticker: string, query: Record<string, unknown>): { data: Filing[]; nextCursor: string | null; limit: number; dataAsOf: string }; getFiling(accession: string): { filing: Filing; dataAsOf: string } }` — applies the §7 check order (params → ticker → readiness → lookup) on top of the pure functions above; controllers call only this service.
+  - Test: `test/unit/query.service.spec.ts` builds it with an `InMemoryFilingsStore` and checks the check order (`?form=4` on `GOOG` → 400, not 404; unknown ticker while loading → 404, not 503).
 
 - [ ] **Step 1: Write failing tests:**
   - cursor: `round trips`; `matches the spec example string exactly` (the §7.2 `nextCursor`); `rejects bad base64, bad JSON, v != 1, malformed k`.
@@ -275,10 +301,10 @@ Inputs the spec implies but no task's main tests exercise; each line has a test 
 - Test: `test/e2e/api.e2e-spec.ts`
 
 **Interfaces:**
-- Consumes: everything above. `AppModule` takes `AppConfig` and `SecClientDeps` through a static `AppModule.forRoot(cfg, overrides?: { secClient?: { getJson(f: string): Promise<unknown> } })` so tests inject `FakeSecClient`.
+- Consumes: everything above. `AppModule` is a plain module importing `AppConfigModule`, `LoggerModule`, `SecModule`, `FilingsModule` and `HealthModule`. Tests build it with `Test.createTestingModule({ imports: [AppModule] }).overrideProvider(APP_CONFIG).useValue(cfg).overrideProvider(SEC_SOURCE).useValue(new FakeSecClient(...))`.
 - Produces: the routes in §7: `GET /v1/companies/:ticker`, `GET /v1/companies/:ticker/filings`, `GET /v1/filings/:accessionNumber`, `GET /health/live`, `GET /health/ready`.
 
-- [ ] **Step 1: Write failing E2E tests** (supertest against `AppModule.forRoot` with `FakeSecClient`, after awaiting the first `runOnce()`):
+- [ ] **Step 1: Write failing E2E tests** (supertest against `AppModule` with `SEC_SOURCE` overridden by `FakeSecClient`, after awaiting the first `runOnce()`):
   - `GET /v1/companies/aapl → 200` with the §7.1 body shape and `meta.dataAsOf`; `GET /v1/companies/GOOG → 404 company-not-found` as problem+json.
   - odd tickers `AAPL.`, `%20AAPL`, 200 × `A` → 404 `company-not-found` (Review Focus 1).
   - `GET /v1/companies/AAPL/filings?form=10-K,10-Q&limit=2 → 200` with the two §7.2 rows and `nextCursor` equal to the spec example; `?form=4 → 400 invalid-parameter`.
@@ -286,7 +312,7 @@ Inputs the spec implies but no task's main tests exercise; each line has a test 
   - `GET /v1/unknown → 404 not-found` as problem+json; an internal error → 500 `internal-error` with no stack trace in the body.
   - readiness: with a fake client where every file throws `SecError('network')`: `/health/live 200`, `/health/ready 503` with `status: loading` before the first pass and still 503 after it (none loaded), `/v1/companies/AAPL → 503 data-unavailable` with `Retry-After: 60` (Review Focus 5). With good fixtures: `/health/ready 200`, six companies listed.
 - [ ] **Step 2: Run** `npm run test:e2e` → FAIL: `AppModule` not found.
-- [ ] **Step 3: Implement.** Controllers call `parseListQuery`/`listFilings`/`findFiling` and wrap results as `{ data, meta: { dataAsOf } }` / `{ data, page: { limit, nextCursor }, meta }`. Check order per §7 (params → ticker → readiness → lookup). `ProblemFilter` maps `Problem`, Nest `NotFoundException` (unknown route) and anything else (500, logged). Logging via `nestjs-pino` with `genReqId: () => randomUUID()`. `main.ts`: `loadConfig(process.env)`, on `ConfigError` print the message and `process.exit(1)`; log the config; create the app; `scheduler.start()` without awaiting it, so liveness answers during loading; `listen(cfg.port)`.
+- [ ] **Step 3: Implement.** Controllers inject `FilingsQueryService` (and `HealthController` injects `FILINGS_STORE`) and wrap results as `{ data, meta: { dataAsOf } }` / `{ data, page: { limit, nextCursor }, meta }`. Check order per §7 (params → ticker → readiness → lookup). `ProblemFilter` maps `Problem`, Nest `NotFoundException` (unknown route) and anything else (500, logged). Logging via `nestjs-pino` with `genReqId: () => randomUUID()`. Logging: nestjs-pino reuses the `APP_LOGGER` pino instance. `main.ts`: `NestFactory.create(AppModule)`; a `ConfigError` thrown by the `APP_CONFIG` factory is printed and the process exits with code 1; log the config; `listen(APP_CONFIG.port)`. The scheduler starts from its `onApplicationBootstrap` hook without being awaited, so liveness answers during loading.
 - [ ] **Step 4: Run** `npm run test:e2e` → PASS; full done check.
 - [ ] **Step 5: Run the service and Postman against it:** `SEC_USER_AGENT="<owner's value>" npm run build && npm start`, wait for `/health/ready` 200, then the Postman command → all assertions pass. Report the assertion counts and exit code.
 - [ ] **Step 6: Ask owner, then commit** `feat(api): add v1 controllers, problem+json errors, health and bootstrap`.
