@@ -100,6 +100,15 @@ describe('SecClient', () => {
     expect(h.fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    ['3000000000', 86400],
+    ['9'.repeat(400), 86400],
+    ['86400', 86400],
+  ])('caps Retry-After %s at one day (%p s)', async (value, expected) => {
+    const h = harness([html(429, { 'retry-after': value })]);
+    expect((await errorOf(h.client.getJson(FILE))).retryAfterSeconds).toBe(expected);
+  });
+
   it('maps 429 without Retry-After to rate_limited with no retryAfterSeconds', async () => {
     const h = harness([html(429)]);
     const e = await errorOf(h.client.getJson(FILE));

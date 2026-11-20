@@ -132,7 +132,10 @@ function isRetryable(e: SecError): boolean {
   );
 }
 
+/** SEC is untrusted: a Retry-After above one day is treated as one day. */
+const MAX_RETRY_AFTER_SECONDS = 86_400;
+
 function retryAfter(res: Response): number | undefined {
   const v = res.headers.get('retry-after');
-  return v !== null && /^\d+$/.test(v) ? Number(v) : undefined;
+  return v !== null && /^\d+$/.test(v) ? Math.min(Number(v), MAX_RETRY_AFTER_SECONDS) : undefined;
 }

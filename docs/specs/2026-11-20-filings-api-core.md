@@ -1,8 +1,9 @@
 # Spec: EDGAR Filings API — core milestone
 
-- **Status:** draft, awaiting approval. Owner decisions of 2026-11-20 are included:
-  readiness rule with retries (§9.3, §9.4) and the 2-hour cut with a Postman test profile
-  (§2, §11).
+- **Status:** approved and implemented (core milestone, branch `feat/core-milestone`).
+  Owner decisions of 2026-11-20 are included, among them the readiness rule with retries
+  (§9.3, §9.4) and the 2-hour cut with a Postman test profile (§2, §11). Where the build
+  changed a rule, this spec was updated in the same commit as the code.
 - **Date:** 2026-11-20
 - **Evidence:** [docs/research/sec-findings.md](../research/sec-findings.md). Numbers in
   this spec come from there unless stated otherwise.
@@ -56,7 +57,7 @@ requests are answered from memory only and **never call SEC**.
 Caching headers (`ETag`, 304, `Cache-Control`), Prometheus metrics and a data-age alert,
 token-bucket rate limiter, jittered refresh, generated OpenAPI with a drift test, graceful
 shutdown, security headers, Docker healthcheck, multi-stage build and non-root user, CI
-pipeline (including the Postman run), measuring event-loop blocking during refresh. Also
+pipeline (including the Postman run), an event-loop delay metric (the one-off measurement is in §12). Also
 the items cut from core below. All of these are additions; none changes the v1 contract.
 
 ### Time box (owner decision, 2026-11-20)
@@ -137,9 +138,9 @@ flowchart LR
         Query -->|read| Store[("Filings store<br/>in memory")]
         Health["Health controller"] -->|read status| Store
         Scheduler["Refresh scheduler"] -->|run| Loader["Loader"]
-        Loader -->|fetch| Client["SEC client<br/>headers, timeout, ≤5 req/s"]
+        Loader -->|fetch| Client["SEC client<br/>headers, timeout, ≤5 req/s, retries"]
         Loader -->|check and map| Adapter["SEC adapter"]
-        Loader -->|swap company in| Store
+        Scheduler -->|swap company in| Store
     end
 
     Client -->|HTTPS| SEC[(data.sec.gov)]
@@ -157,29 +158,33 @@ makes the in-memory store swappable for a shared one (§12) and lets tests repla
 | Component | Job |
 |---|---|
 | **Controllers** | Parse and check request input, call the query service, shape the response. No business rules. |
-| **Query service** | Filtering, ordering, cursor encoding and decoding. Pure functions over a snapshot. |
+| **Query service** | `FilingsQueryService` applies the §7 check order; the filtering, ordering and cursor logic under it are pure functions (`query.ts`, `cursor.ts`). |
 | **Filings store** | Holds the current state (§6). `get()` returns it; `setCompany()` swaps in a new version of one company. Behind an interface (`FilingsStore`) so a shared store can replace it later. |
-| **Loader** | Decides what to fetch, asks the client, passes each raw file to the adapter, merges, and writes to the store. |
-| **Refresh scheduler** | Runs the loader at startup and then on a timer. Never runs two loads at once. |
+| **Loader** | Decides what to fetch, asks the client, passes each raw file to the adapter, merges, and returns the result. It never touches the store. |
+| **Refresh scheduler** | Runs the loader at startup and then on a timer, never two runs at once, and writes each company's result (status, filings, `dataAsOf`) into the store. |
 | **SEC client** | The only code that makes HTTP calls to SEC. Takes a file name, returns raw parsed JSON or a typed error (§9.3). Knows nothing about SEC's JSON shape. |
 | **SEC adapter** | The only code that knows SEC's JSON shape. Checks a raw file and turns it into our types, or rejects it. |
 | **Config** | Reads and checks environment variables once at startup. |
 
-### Suggested layout
+### Layout
 
 ```
 src/
-  config/        env schema and typed config
-  sec/           sec-client.ts, sec-adapter.ts, sec.types.ts
-  filings/       filings.store.ts, loader.ts, merge.ts, refresh.scheduler.ts,
-                 query.service.ts, cursor.ts, companies.controller.ts,
-                 filings.controller.ts, dto/
-  health/        health.controller.ts
-  common/        problem-details filter, logging setup
-  companies.ts   the six tickers and their CIKs
+  main.ts, app.module.ts   bootstrap and wiring
+  companies.ts             the six tickers, their CIKs, the core forms
+  config/                  config.ts (env checks), config.module.ts
+  common/                  tokens.ts (injection tokens), logger.ts, logger.module.ts,
+                           problem.ts, problem.filter.ts (problem+json)
+  sec/                     sec-client.ts, sec-adapter.ts, sec.module.ts
+  filings/                 filing.ts, loader.ts, merge.ts, filings.store.ts,
+                           refresh.scheduler.ts, cursor.ts, query.ts, query.service.ts,
+                           companies.controller.ts, filings.controller.ts, filings.module.ts
+  health/                  health.controller.ts, health.module.ts
 test/
-  fixtures/      trimmed real SEC responses, recorded 2026-11-20
-  unit/ and e2e/
+  fixtures/                trimmed real SEC responses, recorded 2026-11-20
+  fakes/, support/         FakeSecClient and fixture helpers
+  unit/, e2e/
+postman/                   API test collection and environment (JSON)
 ```
 
 ## 6. Data model
@@ -198,7 +203,7 @@ Listed in alphabetical ticker order. "Ticker order" anywhere in this spec means 
 | NFLX | 0001065280 |
 
 CIKs do not change, so we keep this list in code instead of downloading SEC's ticker
-file. On each load the adapter checks that the ticker is in the company's SEC `tickers`
+file. On each load the loader checks that the ticker is in the company's SEC `tickers`
 list and logs a warning if it is not.
 
 ### Company (returned by the API)
@@ -240,7 +245,9 @@ always sees one consistent state:
   - `status`: `not_loaded`, `failed`, `loaded` or `stale` (§9.4),
   - `company` and `filings` (core filings since `FILINGS_SINCE`, sorted newest first,
     unique by accession). Empty until the first successful load,
-  - `dataAsOf`: when we last downloaded this company's `recent` file successfully (UTC),
+  - `dataAsOf`: when the last successful load or refresh of this company started (UTC),
+    i.e. when its `recent` file download began. Using the start, not the end, means a slow
+    load never makes data look fresher than it is,
   - `lastError`: short text of the last failure, or `null`,
   - `nextFullLoadAt`: for `failed` companies, the earliest time to retry (§9.2),
 - one index for the whole store: accession number → filing. If two companies list the same
@@ -376,8 +383,11 @@ The cursor is opaque to customers. Inside it is base64url-encoded JSON (no paddi
 
 What the cursor guarantees while data refreshes between pages:
 
-- No filing is returned twice.
-- Every filing that existed during the whole paging session is returned once.
+- Every filing that existed, unchanged, during the whole paging session is returned
+  exactly once.
+- If SEC corrects an already-returned filing's `filingDate` or `acceptanceDateTime` so that
+  it now sorts after `k`, it is returned again on a later page, with the new values
+  (rare). Clients should key on `accessionNumber`.
 - New filings normally have the newest dates, so they sort before `k` and do not shift the
   pages; they show up the next time the client starts from the first page.
 - A filing that appears during paging with an **older** date than `k` (rare: a late or
@@ -520,11 +530,13 @@ client's spacing (≥200 ms apart with the default rate).
 4. If any download or check fails, the company **does not load** and keeps nothing new.
    We never show half a history.
 5. Keep rows that are core forms with `filingDate` ≥ `FILINGS_SINCE`. Remove duplicate
-   accessions (the `recent` row wins). Sort, set `status: loaded`, `dataAsOf`, and swap the
-   company into the store.
+   accessions (the `recent` row wins), sort, and return the result. The scheduler then
+   sets `status: loaded` and `dataAsOf` and swaps the company into the store.
 
 Measured cost with `FILINGS_SINCE=2021-01-01`: 31 requests (6 submissions files plus 25
-overflow files, 22 of them for GS). At 5 per second, about 7 seconds plus SEC response time.
+overflow files, 22 of them for GS). Request spacing dominates: on a live run (2026-11-20)
+the first pass took 7.0 s (GS alone 5.2 s) and the service was ready 7.2 s after the
+process started. SEC's response time mostly fits inside the 200 ms spacing.
 
 ### 9.2 Scheduled refresh
 
@@ -568,9 +580,11 @@ fixed interval), the scheduler runs the loader again. For each company in ticker
   logged at `error` level, the company keeps its last good data, its `status` becomes
   `stale` (or `failed`) with `lastError: "internal error"`, and the run continues with the
   next company.
-- **If SEC answers 429 or 403**, the loader stops the whole run at once: companies not yet
+- **If SEC answers 429 or 403**, the scheduler stops the whole run at once: companies not yet
   reached keep their current state. The next run starts after the refresh interval or
-  SEC's `Retry-After` header, whichever is longer. A 403 is logged at `error` level as
+  SEC's `Retry-After` header, whichever is longer. SEC is untrusted, so a `Retry-After`
+  above one day is treated as one day, and no wait is ever longer than the largest timer
+  Node.js supports (about 24.8 days; beyond it Node fires after 1 ms). A 403 is logged at `error` level as
   "User-Agent rejected, check SEC_USER_AGENT".
 
 Because each run waits for the previous one to finish, runs never overlap. If SEC is slow,
@@ -587,8 +601,8 @@ sequenceDiagram
     participant St as Filings store
 
     Note over Sch,St: Startup: full load of every company
-    Sch->>L: run
     loop each company, in ticker order
+        Sch->>L: fullLoad(ticker)
         L->>C: get CIK{cik}.json
         C->>SEC: GET with User-Agent, gzip, timeout
         Note over C,SEC: every GET: up to SEC_MAX_RETRIES retries on timeout,<br/>network error or 5xx (default 1 s, 2 s, ±25%)
@@ -604,39 +618,43 @@ sequenceDiagram
             L->>A: check overflow file
             A-->>L: rows
         end
+        L-->>Sch: result: company and filings, or the error
         alt everything downloaded and valid
-            L->>St: set company: loaded, filings, dataAsOf
-        else any failure
-            L->>St: set company: failed, lastError, nextFullLoadAt
+            Sch->>St: set company: loaded, filings, dataAsOf
+        else 429 or 403
+            Sch->>St: set company: failed
+            Sch->>Sch: stop this run
+        else any other failure
+            Sch->>St: set company: failed, lastError, nextFullLoadAt
         end
     end
-    L-->>Sch: done
     Sch->>Sch: wait REFRESH_INTERVAL_SECONDS
 
     Note over Sch,St: Scheduled refresh (repeats)
-    Sch->>L: run
     loop each company, in ticker order
         alt not_loaded or failed
-            L->>L: full load as above, if nextFullLoadAt has passed
+            Sch->>L: fullLoad(ticker), if nextFullLoadAt has passed
         else loaded or stale
+            Sch->>L: refresh(ticker, previous filings)
             L->>C: get CIK{cik}.json
             C->>SEC: GET
-            alt 200 and valid
-                SEC-->>C: JSON
-                C-->>L: raw JSON
-                L->>A: check submissions file
-                A-->>L: recent rows
-                L->>L: merge with old rows (section 9.2)
-                L->>St: set company: loaded, filings, new dataAsOf
+            SEC-->>C: JSON
+            C-->>L: raw JSON
+            L->>A: check submissions file
+            A-->>L: recent rows
+            L->>L: merge with old rows (section 9.2)
+            L-->>Sch: result
+            alt valid
+                Sch->>St: set company: loaded, filings, new dataAsOf
             else 429 or 403
-                L->>L: stop this run
+                Sch->>St: set company: stale, lastError
+                Sch->>Sch: stop this run
             else other error or invalid data
-                L->>St: set company: stale, lastError
+                Sch->>St: set company: stale, lastError
             end
         end
     end
-    L-->>Sch: done
-    Sch->>Sch: wait REFRESH_INTERVAL_SECONDS (or Retry-After)
+    Sch->>Sch: wait REFRESH_INTERVAL_SECONDS after finishing (or Retry-After)
 ```
 
 ### 9.3 What the client and adapter check
@@ -663,8 +681,8 @@ failure is likely to pass:
   by a random amount of up to ±25%, so several instances do not retry in step.
 - Every attempt goes through the same request spacing, so retries never push us above 5
   requests per second.
-- Only after the last attempt fails does the error reach the loader, which marks the
-  company `stale` or `failed` (§9.2).
+- Only after the last attempt fails does the error reach the loader. The loader returns
+  it to the scheduler, which marks the company `stale` or `failed` (§9.2).
 - Worst case with the defaults: a refresh is 18 requests instead of 6, and a startup 93
   instead of 31.
 
@@ -766,7 +784,7 @@ One JSON object per line on stdout.
 - Each request log has a generated request ID. (Accepting and returning `X-Request-Id`
   is in hardening.)
 - Each SEC retry is logged at `warn` with the attempt number and error type.
-- The loader logs one line per company per run: ticker, outcome, duration, requests made,
+- The scheduler logs one line per company per run: ticker, outcome, duration, requests made,
   rows kept, and the error type if it failed.
 - At startup we log the config, including `SEC_USER_AGENT`. That value contains a contact
   email on purpose (SEC requires it), and it is not a secret.
@@ -838,7 +856,30 @@ What one instance costs SEC, with the defaults:
 | Startup | 31 requests (measured), ≤5 per second |
 | Each refresh | 6 requests (one `recent` file per company) |
 | Download | about 440 MB a day (GS `recent` is 307 KB gzipped, 1,440 times a day) |
-| Memory | 567 filings (measured), well under 1 MB |
+| Memory, data | 567 filings, 166 KB as JSON (measured) |
+| Memory, process | about 160 MB RSS when ready, 207–222 MB under load and through refreshes (measured) |
+
+The process figure is what to size a container for. The data itself is a small part of
+it; most is Node.js, NestJS and the buffers for SEC's files (GS's `recent` is 2.6 MB of
+JSON each refresh). The live run lasted 3.5 minutes with 3 refreshes and showed no growth
+trend, which is too short to rule out a slow leak; hardening adds a memory metric.
+
+### Measured performance (live run, 2026-11-20, one instance, local machine)
+
+The spec sets no latency target. These are measured baselines, not commitments:
+
+| What | p50 | p95 | p99 | max |
+|---|---|---|---|---|
+| List page, 20 rows (sequential, 1,000 requests) | 0.2 ms | 0.4 ms | 0.7 ms | 1.9 ms |
+| List page, 100 rows (GS) | 0.2 ms | 0.3 ms | 0.6 ms | 1.9 ms |
+| List page with form and date filters | 0.2 ms | 0.2 ms | 0.4 ms | 1.3 ms |
+| List page 2 via cursor | 0.2 ms | 0.2 ms | 0.2 ms | 0.8 ms |
+| Filing by accession | 0.1 ms | 0.2 ms | 0.3 ms | 6.1 ms |
+| List page, 50 concurrent clients (5,000 requests, about 15,000 per second) | 3.0 ms | 5.6 ms | 7.4 ms | 11.6 ms |
+
+Times are measured by the client on the same machine, so they exclude network latency.
+A scheduled refresh took 1.3–2.6 s (6 requests) and slowed requests that arrived during
+it by at most 27 ms, the CPU pause of parsing GS's file.
 
 Running **more than one instance** works, with two catches. Each instance polls SEC on its
 own, so SEC traffic grows with the instance count, and many instances starting together
@@ -865,8 +906,9 @@ interface makes this a swap) when any of these becomes true:
 | A restart while SEC is down leaves the service not ready until SEC returns | Downtime if there is only one instance | Saving the last state to disk is the planned fix (§12). |
 | Data age when healthy is up to `REFRESH_INTERVAL_SECONDS`, plus the length of a run, plus SEC's own delay. Stale companies are older, with no upper limit in this milestone | Customers see the age in `meta.dataAsOf` | Matches the refresh decision. Hardening adds an alert. |
 | A filing that appears with an older date than a client's cursor is not returned to that client | Incremental sync by paging can miss a late record | Rare. Documented for customers in §7.2. |
+| A filing whose date SEC corrects mid-session can be returned twice | A client paging through sees one accession twice, with the new values | Rare. Clients key on `accessionNumber` (§7.2). |
 | GOOG, FB and other tickers return 404 | Customers must use the primary ticker | Scope decision. Adding aliases later is an addition, not a break. |
 | Filings older than `FILINGS_SINCE` return 404 by accession | Looks the same as "does not exist" | The 404 `detail` says how far back we go. |
 | If the same accession is ever listed under two of our companies, accession lookup returns the first by ticker order and logs a warning | Lookup shows one company | Not seen in the data. The list endpoint still shows it under both. |
-| Each refresh downloads GS's full 2.6 MB file to keep 146 rows | Bandwidth and a short CPU pause every minute | SEC offers no smaller file or "has it changed?" check. Measured in hardening. |
+| Each refresh downloads GS's full 2.6 MB file to keep 146 rows | Bandwidth, and a CPU pause of up to 27 ms (measured) every minute | SEC offers no smaller file or "has it changed?" check. |
 | No API keys or per-client rate limits | Anyone who can reach the service can call it | Belongs at the gateway. |

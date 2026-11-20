@@ -24,6 +24,9 @@ export const defaultSchedulerDeps: SchedulerDeps = {
   clearTimeout: (handle) => clearTimeout(handle as NodeJS.Timeout),
 };
 
+/** Largest delay setTimeout accepts; above it Node fires after 1 ms. */
+const MAX_TIMER_MS = 2 ** 31 - 1;
+
 /** What the scheduler needs from the loader. */
 export type CompanyLoader = Pick<Loader, 'fullLoad' | 'refresh'>;
 
@@ -73,7 +76,10 @@ export class RefreshScheduler implements OnApplicationBootstrap, OnModuleDestroy
     for (const { ticker } of COMPANIES) {
       const stop = await this.runCompany(ticker);
       if (stop) {
-        nextDelayMs = Math.max(intervalMs, (stop.retryAfterSeconds ?? 0) * 1000);
+        nextDelayMs = Math.min(
+          MAX_TIMER_MS,
+          Math.max(intervalMs, (stop.retryAfterSeconds ?? 0) * 1000),
+        );
         break;
       }
     }
@@ -89,7 +95,13 @@ export class RefreshScheduler implements OnApplicationBootstrap, OnModuleDestroy
 
   private async loop(): Promise<void> {
     if (!this.running) return;
-    const { nextDelayMs } = await this.runOnce();
+    let nextDelayMs = this.cfg.refreshIntervalSeconds * 1000;
+    try {
+      ({ nextDelayMs } = await this.runOnce());
+    } catch (err) {
+      // runOnce catches per company; this guards the rest, so the chain never dies.
+      this.log.error({ err }, 'refresh run failed unexpectedly');
+    }
     if (!this.running) return;
     this.timer = this.deps.setTimeout(() => void this.loop(), nextDelayMs);
   }
@@ -122,7 +134,8 @@ export class RefreshScheduler implements OnApplicationBootstrap, OnModuleDestroy
         status: 'loaded',
         company: result.company,
         filings: result.filings,
-        dataAsOf: isoSeconds(finishedAt),
+        // When the download started: never claim data is fresher than it is.
+        dataAsOf: isoSeconds(startedAt),
         lastError: null,
         nextFullLoadAt: null,
       });

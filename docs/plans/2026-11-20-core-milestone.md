@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**Status:** executed on `feat/core-milestone` (Tasks 1–9 plus the final-review fixes). Where the build departed from this plan, the plan text and the spec were updated in the same commit.
+
 **Goal:** Build the core milestone of the read-only EDGAR Filings API exactly as the spec describes, in about 2 hours.
 
 **Architecture:** One NestJS process. A refresh scheduler drives a loader that fetches SEC files through one SEC client, checks them through one adapter, and swaps each company into an in-memory store. Controllers only read the store through a pure query service; nothing on the request path can reach SEC.

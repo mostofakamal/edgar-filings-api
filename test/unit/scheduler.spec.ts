@@ -190,6 +190,24 @@ describe('RefreshScheduler.runOnce', () => {
     expect(r.nextDelayMs).toBe(120_000);
   });
 
+  it('never asks for a timer delay above the setTimeout maximum (2^31-1 ms)', async () => {
+    const h = setup();
+    h.fullLoad.mockImplementation(() =>
+      Promise.resolve(failure(new SecError('rate_limited', '429', 429, 10 ** 12))),
+    );
+    expect((await h.scheduler.runOnce()).nextDelayMs).toBe(2 ** 31 - 1);
+  });
+
+  it('dataAsOf is when the load started, not when it finished', async () => {
+    const h = setup();
+    h.fullLoad.mockImplementation((t) => {
+      h.advance(5_000); // a slow load: the SEC download happened at its start
+      return Promise.resolve(success(t));
+    });
+    await h.scheduler.runOnce();
+    expect(h.state('AAPL').dataAsOf).toBe('2026-11-20T16:30:00Z');
+  });
+
   it('429 without Retry-After waits the refresh interval', async () => {
     const h = setup();
     h.fullLoad.mockImplementation(() =>
@@ -261,6 +279,31 @@ describe('RefreshScheduler.runOnce', () => {
 });
 
 describe('RefreshScheduler.start/stop', () => {
+  it('keeps the refresh chain alive and logs when a run throws unexpectedly', async () => {
+    const h = setup();
+    const boom = new Error('store failure');
+    const setCompany = h.store.setCompany.bind(h.store);
+    let calls = 0;
+    jest.spyOn(h.store, 'setCompany').mockImplementation((s) => {
+      if (calls++ === 0) throw boom;
+      setCompany(s);
+    });
+    const unhandled = jest.fn();
+    process.on('unhandledRejection', unhandled);
+    try {
+      h.scheduler.start();
+      await new Promise((r) => setImmediate(r));
+      await new Promise((r) => setImmediate(r));
+      expect(unhandled).not.toHaveBeenCalled();
+      expect(h.log.error).toHaveBeenCalledWith({ err: boom }, 'refresh run failed unexpectedly');
+      expect(h.timers).toHaveLength(1);
+      expect(h.timers[0]!.ms).toBe(60_000);
+    } finally {
+      process.off('unhandledRejection', unhandled);
+      h.scheduler.stop();
+    }
+  });
+
   it('schedules the next run only after the current one finishes (runs never overlap)', async () => {
     const h = setup();
     let release: () => void = () => undefined;
