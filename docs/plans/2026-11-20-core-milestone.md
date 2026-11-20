@@ -189,7 +189,7 @@ Inputs the spec implies but no task's main tests exercise; each line has a test 
 
 - [ ] **Step 1: Create fixtures** by trimming the recorded 2026-11-20 files (kept outside the repo) to real rows:
   - `CIK0000320193.json`: AAPL with `0000320193-26-000026` (10-K), `0000320193-26-000020` (10-Q), `0000320193-24-000081` (10-Q), `0001140361-26-035325` (8-K/A), one Form 4 row with `xslF345X06/form4.xml`, `files: []`, oldest row before 2021.
-  - `CIK0000886982.json` + `CIK0000886982-submissions-001.json` + `-002.json`: GS with a few core and 424B2 rows each; the newest overflow file's oldest row is still after `2021-01-01`, the second's is before it.
+  - `CIK0000886982.json` + `CIK0000886982-submissions-001.json` + `-022.json`: GS with a few core and 424B2 rows each; the newest overflow file's oldest row is still after `2021-01-01`, the second's is before it. (GS's real `-002` covers 2025 only, so the fixture lists the real `-001` and `-022` and drops the files between.)
   - The other four companies: one core row each, `files: []`.
   - `test/fixtures/README.md`: one paragraph saying where they came from and that rows are unedited apart from removal.
 - [ ] **Step 2: Write failing tests:**

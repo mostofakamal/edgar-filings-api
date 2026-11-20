@@ -4,7 +4,8 @@ What we learned about SEC data before designing the API. Every number here was m
 on **2026-11-20** against live SEC endpoints. Re-check before relying on anything that can
 drift (counts, headers, ticker lists).
 
-**Sources** (each finding is tagged). Raw downloads were kept outside the repo.
+**Sources** (each finding is tagged). Raw downloads were kept outside the repo; the test
+fixtures in `test/fixtures/` are trimmed, unedited copies of them.
 
 - **[J]** `https://data.sec.gov/submissions/CIK##########.json` and the overflow files it lists
 - **[T]** `https://www.sec.gov/files/company_tickers.json` and `company_tickers_exchange.json`

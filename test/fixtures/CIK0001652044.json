@@ -1,0 +1,28 @@
+{
+  "cik": "0001652044",
+  "entityType": "operating",
+  "name": "Alphabet Inc.",
+  "tickers": ["GOOGL", "GOOG", "GOOGM", "GOOGN"],
+  "exchanges": ["Nasdaq", "Nasdaq", "Nasdaq", "Nasdaq"],
+  "filings": {
+    "recent": {
+      "accessionNumber": ["0001193125-26-449835"],
+      "filingDate": ["2026-11-05"],
+      "reportDate": ["2026-11-05"],
+      "acceptanceDateTime": ["2026-11-05T21:10:44.000Z"],
+      "act": ["34"],
+      "form": ["8-K"],
+      "fileNumber": ["001-37580"],
+      "filmNumber": ["261527412"],
+      "items": ["8.01,9.01"],
+      "core_type": ["XBRL"],
+      "size": [1007280],
+      "isXBRL": [1],
+      "isInlineXBRL": [1],
+      "isXBRLNumeric": [0],
+      "primaryDocument": ["d174184d8k.htm"],
+      "primaryDocDescription": ["8-K"]
+    },
+    "files": []
+  }
+}

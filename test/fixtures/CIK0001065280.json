@@ -1,0 +1,28 @@
+{
+  "cik": "0001065280",
+  "entityType": "operating",
+  "name": "NETFLIX INC",
+  "tickers": ["NFLX"],
+  "exchanges": ["Nasdaq"],
+  "filings": {
+    "recent": {
+      "accessionNumber": ["0001065280-26-000291"],
+      "filingDate": ["2026-10-21"],
+      "reportDate": ["2026-09-30"],
+      "acceptanceDateTime": ["2026-10-21T20:01:46.000Z"],
+      "act": ["34"],
+      "form": ["10-Q"],
+      "fileNumber": ["001-35727"],
+      "filmNumber": ["261475684"],
+      "items": [""],
+      "core_type": ["XBRL"],
+      "size": [10014035],
+      "isXBRL": [1],
+      "isInlineXBRL": [1],
+      "isXBRLNumeric": [1],
+      "primaryDocument": ["nflx-20260930.htm"],
+      "primaryDocDescription": ["10-Q"]
+    },
+    "files": []
+  }
+}

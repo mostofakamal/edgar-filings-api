@@ -1,0 +1,28 @@
+{
+  "cik": "0001326801",
+  "entityType": "operating",
+  "name": "Meta Platforms, Inc.",
+  "tickers": ["META", "METAM"],
+  "exchanges": ["Nasdaq", "Nasdaq"],
+  "filings": {
+    "recent": {
+      "accessionNumber": ["0001193125-26-458525"],
+      "filingDate": ["2026-11-12"],
+      "reportDate": ["2026-11-12"],
+      "acceptanceDateTime": ["2026-11-12T21:27:49.000Z"],
+      "act": ["34"],
+      "form": ["8-K"],
+      "fileNumber": ["001-35551"],
+      "filmNumber": ["261547472"],
+      "items": ["8.01,9.01"],
+      "core_type": ["XBRL"],
+      "size": [769120],
+      "isXBRL": [1],
+      "isInlineXBRL": [1],
+      "isXBRLNumeric": [0],
+      "primaryDocument": ["d177728d8k.htm"],
+      "primaryDocDescription": ["8-K"]
+    },
+    "files": []
+  }
+}
