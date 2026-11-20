@@ -89,6 +89,9 @@ Moved to hardening to make room (none of them changes how a correct client behav
 - Customer requests never call SEC. Only the loader talks to SEC, through one SEC client,
   and all SEC data passes through one adapter that checks it.
 - At most 5 SEC requests per second per instance (half of SEC's 10), at least 200 ms apart.
+  `SEC_MAX_REQUESTS_PER_SECOND` can lower this but never raise it above 5 (§10).
+- No operational value is fixed in code: SEC URLs, request rate, retries and retry delays
+  are environment variables with the defaults in §10.
 - Every SEC request sends exactly these headers:
   `User-Agent: <SEC_USER_AGENT>`, `Accept-Encoding: gzip, deflate`, `Accept: application/json`.
   `SEC_USER_AGENT` is required and has no default.
@@ -216,7 +219,8 @@ list and logs a warning if it is not.
 | `primaryDocumentUrl` | string \| null | built from `primaryDocument` | `null` if SEC gives `""` |
 
 `primaryDocumentUrl` =
-`https://www.sec.gov/Archives/edgar/data/{CIK without leading zeros}/{accession without dashes}/{primaryDocument}`.
+`{SEC_ARCHIVES_BASE_URL}/{CIK without leading zeros}/{accession without dashes}/{primaryDocument}`
+(default base `https://www.sec.gov/Archives/edgar/data`).
 
 We do not return SEC's other columns (`items`, `size`, XBRL flags, …). Adding fields later
 is allowed in v1; removing them is not, so we start small.
@@ -488,9 +492,9 @@ Bad input lists each problem:
 ### 9.1 Full load (startup, and retry of a failed company)
 
 Companies are loaded one at a time, in ticker order. Every SEC request goes through the
-client's spacing (≥200 ms apart).
+client's spacing (≥200 ms apart with the default rate).
 
-1. Client downloads `https://data.sec.gov/submissions/CIK{cik}.json`.
+1. Client downloads `{SEC_BASE_URL}/CIK{cik}.json` (default `https://data.sec.gov/submissions`).
 2. Adapter checks it (§9.3) and returns: the company, the `recent` rows, and the list of
    overflow files.
 3. If the oldest `filingDate` in `recent` is before `FILINGS_SINCE`, we have everything.
@@ -513,8 +517,8 @@ overflow files, 22 of them for GS). At 5 per second, about 7 seconds plus SEC re
 fixed interval), the scheduler runs the loader again. For each company in ticker order:
 
 - **`not_loaded` or `failed`:** run the full load (§9.1), but only if `nextFullLoadAt` has
-  passed. After a failed full load, `nextFullLoadAt` = now + 5 minutes (or the refresh
-  interval, if longer). This stops a broken company from re-downloading its overflow files
+  passed. After a failed full load, `nextFullLoadAt` = now + `FAILED_COMPANY_RETRY_SECONDS`
+  (default 300, i.e. 5 minutes) or the refresh interval, whichever is longer. This stops a broken company from re-downloading its overflow files
   every minute (about 26 requests each time for GS).
 - **`loaded` or `stale`:** download and check only the `recent` file (1 request), then merge:
 
@@ -565,7 +569,7 @@ sequenceDiagram
     loop each company, in ticker order
         L->>C: get CIK{cik}.json
         C->>SEC: GET with User-Agent, gzip, timeout
-        Note over C,SEC: every GET: up to 2 retries on timeout,<br/>network error or 5xx (1 s, 2 s, ±25%)
+        Note over C,SEC: every GET: up to SEC_MAX_RETRIES retries on timeout,<br/>network error or 5xx (default 1 s, 2 s, ±25%)
         SEC-->>C: JSON
         C-->>L: raw JSON
         L->>A: check submissions file
@@ -618,7 +622,7 @@ sequenceDiagram
 **SEC client** returns raw parsed JSON or one of these errors: `timeout`
 (`SEC_REQUEST_TIMEOUT_MS`), `network`, `rate_limited` (429, with `Retry-After` if sent),
 `forbidden` (403), `http_error` (any other non-200), `not_json` (body does not parse). It
-builds URLs only from `https://data.sec.gov/submissions/` plus a file name that the adapter
+builds URLs only from `SEC_BASE_URL` plus `/` and a file name that the adapter
 has already checked, or `CIK{10 digits}.json`.
 
 **Retries (owner decision, 2026-11-20).** The client retries a request itself when the
@@ -626,19 +630,21 @@ failure is likely to pass:
 
 | Error | Retried? |
 |---|---|
-| `timeout`, `network`, `http_error` with status 500–599 | Yes, up to 2 more attempts |
+| `timeout`, `network`, `http_error` with status 500–599 | Yes, up to `SEC_MAX_RETRIES` more attempts (default 2) |
 | `rate_limited` (429) | No. The run stops (§9.2); retrying would make it worse |
 | `forbidden` (403) | No. It means our User-Agent is rejected; retrying will not fix it |
 | other `http_error` (4xx), `not_json` | No |
 | Adapter rejects the data | No. Same data would come back |
 
-- Wait before attempt 2: 1 second; before attempt 3: 2 seconds. Each wait is changed by a
-  random amount of up to ±25%, so several instances do not retry in step.
+- Waits double, starting at `SEC_RETRY_BASE_DELAY_MS` (default 1 second): with the
+  defaults, 1 second before attempt 2 and 2 seconds before attempt 3. Each wait is changed
+  by a random amount of up to ±25%, so several instances do not retry in step.
 - Every attempt goes through the same request spacing, so retries never push us above 5
   requests per second.
 - Only after the last attempt fails does the error reach the loader, which marks the
   company `stale` or `failed` (§9.2).
-- Worst case: a refresh is 18 requests instead of 6, and a startup 93 instead of 31.
+- Worst case with the defaults: a refresh is 18 requests instead of 6, and a startup 93
+  instead of 31.
 
 **SEC adapter** rejects the **whole file** (so the load or refresh fails for that company)
 if:
@@ -669,8 +675,8 @@ Rejecting the whole file rather than dropping one bad row is deliberate: a silen
 
 The service is **ready once every company has been tried once** (each request with its
 retries, §9.3) and at least one has loaded. A company that failed returns 503
-`data-unavailable` on its own endpoints, and its full load is tried again every 5 minutes
-(§9.2). The other companies are served.
+`data-unavailable` on its own endpoints, and its full load is tried again every
+`FAILED_COMPANY_RETRY_SECONDS` (default 5 minutes, §9.2). The other companies are served.
 
 We chose this over "ready only when all six have loaded" because, with whole-file
 rejection, one bad GS file would otherwise keep every new instance out of service,
@@ -695,7 +701,7 @@ stateDiagram-v2
         not_loaded --> loaded: full load succeeds
         not_loaded --> failed: full load fails
         failed --> loaded: full load succeeds on a later run
-        failed --> failed: fails again (retry after 5 min)
+        failed --> failed: fails again (retry after FAILED_COMPANY_RETRY_SECONDS)
         loaded --> loaded: refresh succeeds (new dataAsOf)
         loaded --> stale: refresh fails (keeps old data)
         stale --> loaded: refresh succeeds
@@ -721,6 +727,12 @@ invalid.
 | `FILINGS_SINCE` | no | `2021-01-01` | Real date, `YYYY-MM-DD`, not in the future |
 | `SEC_REQUEST_TIMEOUT_MS` | no | `10000` | Integer 1000–60000 |
 | `LOG_LEVEL` | no | `info` | `debug`, `info`, `warn` or `error` |
+| `SEC_BASE_URL` | no | `https://data.sec.gov/submissions` | `http` or `https` URL; a trailing `/` is removed. Point it at a mock to run without SEC |
+| `SEC_ARCHIVES_BASE_URL` | no | `https://www.sec.gov/Archives/edgar/data` | `http` or `https` URL; used to build `primaryDocumentUrl` |
+| `SEC_MAX_REQUESTS_PER_SECOND` | no | `5` | Integer 1–5 (never above half of SEC's 10) |
+| `SEC_MAX_RETRIES` | no | `2` | Integer 0–5 |
+| `SEC_RETRY_BASE_DELAY_MS` | no | `1000` | Integer 100–60000; later waits double |
+| `FAILED_COMPANY_RETRY_SECONDS` | no | `300` | Integer, at least 10 |
 
 A `.env.example` file lists them. `.env` files are not loaded automatically; Docker and
 the shell pass variables in.
@@ -749,7 +761,7 @@ One JSON object per line on stdout.
 | Unit: client | Exact request headers; each error type in §9.3, including a 403 HTML body and a non-JSON body; timeout; retry table (retried twice on 503 then succeeds; never retried on 429, 403, 404); retry waits stay inside 1 s / 2 s ±25% (fake timers) |
 | Unit: adapter | Parallel arrays to objects; `""` to `null`; milliseconds removed; each rejection rule in §9.3 (including a bad `files[]` name and a duplicate accession); non-core rows skipped; URL building with and without a folder |
 | Unit: loader and merge | Overflow stop rule (`recent` already old enough; stop after first older file; list ends); `FILINGS_SINCE` and form filter on load **and** refresh; a failed file means nothing loads; each row of the §9.2 worked example; a row whose `filingDate` changed across `R` is not duplicated |
-| Unit: scheduler | Runs never overlap; a failing company becomes stale and the others still refresh; a failed company waits 5 minutes before its next full load; 429/403 stop the run and `Retry-After` is honoured |
+| Unit: scheduler | Runs never overlap; a failing company becomes stale and the others still refresh; a failed company waits `FAILED_COMPANY_RETRY_SECONDS` (or the interval, if longer) before its next full load; 429/403 stop the run and `Retry-After` is honoured |
 | Unit: query and cursor | Sort order with ties; each filter; `filedTo` before `FILINGS_SINCE`; `limit + 1` so the last page has `nextCursor: null`; cursor round trip; same filters in a different order accepted; changed filters and broken cursors rejected; a new filing added between pages causes no duplicate or skip |
 | Unit: config | Each rule in §10, including the missing `SEC_USER_AGENT` |
 | E2E (Jest, HTTP) | One success and one error per endpoint against the Nest app and the fake SEC client; problem+json content type; readiness before and after the first pass |

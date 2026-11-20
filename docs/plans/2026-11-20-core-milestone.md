@@ -15,8 +15,9 @@
 - Requests never call SEC; only `SecClient` makes HTTP calls to SEC, only `sec-adapter.ts` knows SEC's JSON shape (§3, §5).
 - Core forms are exactly `10-K, 10-K/A, 10-Q, 10-Q/A, 8-K, 8-K/A` (§2).
 - SEC headers exactly: `User-Agent: <SEC_USER_AGENT>`, `Accept-Encoding: gzip, deflate`, `Accept: application/json` (§3).
-- At most 5 SEC requests per second: request starts at least 200 ms apart, retries included (§3, §9.3).
-- Retries: `timeout`, `network`, 5xx only; up to 2 more attempts; waits 1000 ms and 2000 ms, each × a random factor in [0.75, 1.25] (§9.3).
+- At most `SEC_MAX_REQUESTS_PER_SECOND` (default and maximum 5) SEC requests per second: request starts at least `ceil(1000 / rate)` ms apart, retries included (§3, §9.3).
+- Retries: `timeout`, `network`, 5xx only; up to `SEC_MAX_RETRIES` (default 2) more attempts; waits `SEC_RETRY_BASE_DELAY_MS × 2^(n-1)` (default 1000, 2000 ms), each × a random factor in [0.75, 1.25] (§9.3).
+- No operational value is hardcoded: SEC URLs, rate, retries, retry delays and the failed-company retry interval come from `AppConfig` (§10). Owner decision, 2026-11-20.
 - Config from env only; `SEC_USER_AGENT` required, no default (§10).
 - Exact dependency versions (`--save-exact`); `overrides`: `glob@14.0.6`, `minimatch@11.0.9` (needed for `npm audit` = 0, see toolchain note below).
 - Every error is `application/problem+json` with `type`, `title`, `status`, `detail`, `instance` (§8).
@@ -159,7 +160,7 @@ Inputs the spec implies but no task's main tests exercise; each line has a test 
   - `parseOverflow(raw: unknown): ParsedOverflow`
   - `interface Filing { accessionNumber; ticker: Ticker; cik; form; filingDate; reportDate: string | null; acceptanceDateTime; primaryDocumentUrl: string | null }` (all strings unless noted)
   - `interface Company { ticker: Ticker; cik: string; name: string; exchange: string | null; filingsAvailableFrom: string }`
-  - `toFiling(row: SecFilingRow, ticker: Ticker, cik: string): Filing`
+  - `toFiling(row: SecFilingRow, ticker: Ticker, cik: string, archivesBaseUrl: string): Filing` — `archivesBaseUrl` is `AppConfig.secArchivesBaseUrl`
   - `compareFilings(a: Filing, b: Filing): number` — negative when `a` is newer (§7.2 order).
   - `oldestFilingDate` is computed over all rows, not just core rows: the overflow stop rule and the merge's `R` need it.
 
@@ -191,7 +192,7 @@ Inputs the spec implies but no task's main tests exercise; each line has a test 
 - Produces:
   - `mergeRefresh(old: Filing[], fresh: Filing[], recentOldest: string): Filing[]` — returns `fresh` + every `old` filing with `filingDate <= recentOldest` whose accession is not in `fresh`, sorted with `compareFilings`.
   - `type LoadResult = { ok: true; company: Company; filings: Filing[]; requests: number } | { ok: false; error: SecError | SecDataError; requests: number }`
-  - `class Loader { constructor(client: { getJson(f: string): Promise<unknown> }, cfg: Pick<AppConfig, 'filingsSince'>); fullLoad(ticker: Ticker): Promise<LoadResult>; refresh(ticker: Ticker, previous: Filing[]): Promise<LoadResult> }`
+  - `class Loader { constructor(client: { getJson(f: string): Promise<unknown> }, cfg: Pick<AppConfig, 'filingsSince' | 'secArchivesBaseUrl'>); fullLoad(ticker: Ticker): Promise<LoadResult>; refresh(ticker: Ticker, previous: Filing[]): Promise<LoadResult> }`
   - `FakeSecClient(files: Record<string, unknown | SecError>)`: `getJson` returns or throws the entry, throws `Error('unexpected SEC request: <name>')` for anything else, and records `calls: string[]`.
 
 - [ ] **Step 1: Write failing tests:**
@@ -218,11 +219,11 @@ Inputs the spec implies but no task's main tests exercise; each line has a test 
   - `interface FilingsStore { get(): StoreState; setCompany(state: CompanyState): void; markFirstPassDone(): void }` and Nest token `FILINGS_STORE = Symbol('FILINGS_STORE')`.
   - `class InMemoryFilingsStore implements FilingsStore` — starts with all six `not_loaded`; every change builds a new frozen `StoreState`.
   - `isReady(state: StoreState): boolean` — `firstPassDone` and at least one company `loaded` or `stale`.
-  - `class RefreshScheduler { constructor(loader: Loader, store: FilingsStore, cfg: Pick<AppConfig, 'refreshIntervalSeconds'>, deps: { now(): number; setTimeout(fn: () => void, ms: number): unknown; clearTimeout(h: unknown): void }, log: Logger); runOnce(): Promise<{ nextDelayMs: number }>; start(): void; stop(): void }`
+  - `class RefreshScheduler { constructor(loader: Loader, store: FilingsStore, cfg: Pick<AppConfig, 'refreshIntervalSeconds' | 'failedCompanyRetrySeconds'>, deps: { now(): number; setTimeout(fn: () => void, ms: number): unknown; clearTimeout(h: unknown): void }, log: Logger); runOnce(): Promise<{ nextDelayMs: number }>; start(): void; stop(): void }`
 
 - [ ] **Step 1: Write failing tests:**
   - store: `starts with six not_loaded companies and is not ready`; `get() returns the same object until a change` and `a change returns a new object` (old reference unchanged); `byAccession indexes every filing; on a duplicate accession keeps the first company in ticker order`; `isReady after first pass with one loaded company` and `not ready after first pass with none loaded`.
-  - scheduler (fake loader, fake timers): `first run full-loads every company in ticker order and marks first pass done`; `a failed full load sets failed, lastError, nextFullLoadAt = now + max(300 s, interval)`; `a failed company is skipped until nextFullLoadAt`; `a loaded company refreshes with its previous filings`; `a refresh failure sets stale and keeps filings and dataAsOf`; `a later success sets loaded and a new dataAsOf`; `429 stops the run; companies after it are untouched; nextDelayMs = max(interval, retryAfter)`; `403 stops the run`; `not_json during refresh sets stale and the run continues` (Review Focus 4); `start() schedules the next run only after the current one finishes` (runs never overlap).
+  - scheduler (fake loader, fake timers): `first run full-loads every company in ticker order and marks first pass done`; `a failed full load sets failed, lastError, nextFullLoadAt = now + max(failedCompanyRetrySeconds, interval)`; `a failed company is skipped until nextFullLoadAt`; `a loaded company refreshes with its previous filings`; `a refresh failure sets stale and keeps filings and dataAsOf`; `a later success sets loaded and a new dataAsOf`; `429 stops the run; companies after it are untouched; nextDelayMs = max(interval, retryAfter)`; `403 stops the run`; `not_json during refresh sets stale and the run continues` (Review Focus 4); `start() schedules the next run only after the current one finishes` (runs never overlap).
 - [ ] **Step 2: Run** → FAIL: modules not found.
 - [ ] **Step 3: Implement.** `start()` calls `runOnce()`, then `setTimeout(next, nextDelayMs)`; `markFirstPassDone()` after the first `runOnce()`. One log line per company per run: `{ ticker, outcome, durationMs, requests, rows, errorKind }`.
 - [ ] **Step 4: Run** → PASS; full done check.

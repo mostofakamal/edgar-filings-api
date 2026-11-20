@@ -26,6 +26,12 @@ describe('loadConfig', () => {
       filingsSince: '2021-01-01',
       secRequestTimeoutMs: 10000,
       logLevel: 'info',
+      secBaseUrl: 'https://data.sec.gov/submissions',
+      secArchivesBaseUrl: 'https://www.sec.gov/Archives/edgar/data',
+      secMaxRequestsPerSecond: 5,
+      secMaxRetries: 2,
+      secRetryBaseDelayMs: 1000,
+      failedCompanyRetrySeconds: 300,
     });
   });
 
@@ -37,6 +43,12 @@ describe('loadConfig', () => {
         FILINGS_SINCE: '2023-06-30',
         SEC_REQUEST_TIMEOUT_MS: '1000',
         LOG_LEVEL: 'debug',
+        SEC_BASE_URL: 'http://localhost:4010/submissions/',
+        SEC_ARCHIVES_BASE_URL: 'https://archive.example.com/data',
+        SEC_MAX_REQUESTS_PER_SECOND: '2',
+        SEC_MAX_RETRIES: '0',
+        SEC_RETRY_BASE_DELAY_MS: '250',
+        FAILED_COMPANY_RETRY_SECONDS: '60',
       }),
     ).toEqual({
       secUserAgent: UA,
@@ -45,6 +57,12 @@ describe('loadConfig', () => {
       filingsSince: '2023-06-30',
       secRequestTimeoutMs: 1000,
       logLevel: 'debug',
+      secBaseUrl: 'http://localhost:4010/submissions',
+      secArchivesBaseUrl: 'https://archive.example.com/data',
+      secMaxRequestsPerSecond: 2,
+      secMaxRetries: 0,
+      secRetryBaseDelayMs: 250,
+      failedCompanyRetrySeconds: 60,
     });
   });
 
@@ -83,6 +101,16 @@ describe('loadConfig', () => {
     ['SEC_REQUEST_TIMEOUT_MS', '999'],
     ['SEC_REQUEST_TIMEOUT_MS', '60001'],
     ['LOG_LEVEL', 'trace'],
+    ['SEC_BASE_URL', 'not a url'],
+    ['SEC_BASE_URL', 'ftp://data.sec.gov/submissions'],
+    ['SEC_ARCHIVES_BASE_URL', ''],
+    ['SEC_MAX_REQUESTS_PER_SECOND', '0'],
+    ['SEC_MAX_REQUESTS_PER_SECOND', '6'],
+    ['SEC_MAX_RETRIES', '6'],
+    ['SEC_MAX_RETRIES', '-1'],
+    ['SEC_RETRY_BASE_DELAY_MS', '99'],
+    ['SEC_RETRY_BASE_DELAY_MS', '60001'],
+    ['FAILED_COMPANY_RETRY_SECONDS', '9'],
   ])('rejects %s=%s', (name, value) => {
     expect(errorOf({ SEC_USER_AGENT: UA, [name]: value }).message).toContain(name);
   });

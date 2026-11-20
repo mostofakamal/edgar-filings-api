@@ -7,6 +7,14 @@ export interface AppConfig {
   filingsSince: string;
   secRequestTimeoutMs: number;
   logLevel: 'debug' | 'info' | 'warn' | 'error';
+  /** Base URL of SEC's submissions files, without a trailing slash. */
+  secBaseUrl: string;
+  /** Base URL used to build primaryDocumentUrl, without a trailing slash. */
+  secArchivesBaseUrl: string;
+  secMaxRequestsPerSecond: number;
+  secMaxRetries: number;
+  secRetryBaseDelayMs: number;
+  failedCompanyRetrySeconds: number;
 }
 
 export class ConfigError extends Error {
@@ -19,7 +27,15 @@ const DEFAULTS = {
   FILINGS_SINCE: '2021-01-01',
   SEC_REQUEST_TIMEOUT_MS: '10000',
   LOG_LEVEL: 'info',
+  SEC_BASE_URL: 'https://data.sec.gov/submissions',
+  SEC_ARCHIVES_BASE_URL: 'https://www.sec.gov/Archives/edgar/data',
+  SEC_MAX_REQUESTS_PER_SECOND: '5',
+  SEC_MAX_RETRIES: '2',
+  SEC_RETRY_BASE_DELAY_MS: '1000',
+  FAILED_COMPANY_RETRY_SECONDS: '300',
 } as const;
+
+type VarName = keyof typeof DEFAULTS | 'SEC_USER_AGENT';
 
 /** True when `s` is YYYY-MM-DD and names a real calendar day. */
 export function isRealDate(s: string): boolean {
@@ -42,6 +58,19 @@ const atLeast = (min: number) =>
     .transform(Number)
     .refine((n) => n >= min, `must be an integer of at least ${min}`);
 
+/** An http(s) URL; stored without a trailing slash. */
+const baseUrl = z
+  .string()
+  .refine((s) => {
+    try {
+      const u = new URL(s);
+      return u.protocol === 'https:' || u.protocol === 'http:';
+    } catch {
+      return false;
+    }
+  }, 'must be an http or https URL')
+  .transform((s) => s.replace(/\/+$/, ''));
+
 function schema(today: string) {
   return z.object({
     SEC_USER_AGENT: z
@@ -60,6 +89,13 @@ function schema(today: string) {
     LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error'], {
       error: 'must be one of debug, info, warn, error',
     }),
+    SEC_BASE_URL: baseUrl,
+    SEC_ARCHIVES_BASE_URL: baseUrl,
+    // Capped at 5: half of SEC's 10 per second, which counts all our machines (spec §3).
+    SEC_MAX_REQUESTS_PER_SECOND: integer(1, 5),
+    SEC_MAX_RETRIES: integer(0, 5),
+    SEC_RETRY_BASE_DELAY_MS: integer(100, 60000),
+    FAILED_COMPANY_RETRY_SECONDS: atLeast(10),
   });
 }
 
@@ -68,14 +104,10 @@ export function loadConfig(
   env: Record<string, string | undefined>,
   today: Date = new Date(),
 ): AppConfig {
-  const input = {
-    SEC_USER_AGENT: env.SEC_USER_AGENT,
-    PORT: env.PORT ?? DEFAULTS.PORT,
-    REFRESH_INTERVAL_SECONDS: env.REFRESH_INTERVAL_SECONDS ?? DEFAULTS.REFRESH_INTERVAL_SECONDS,
-    FILINGS_SINCE: env.FILINGS_SINCE ?? DEFAULTS.FILINGS_SINCE,
-    SEC_REQUEST_TIMEOUT_MS: env.SEC_REQUEST_TIMEOUT_MS ?? DEFAULTS.SEC_REQUEST_TIMEOUT_MS,
-    LOG_LEVEL: env.LOG_LEVEL ?? DEFAULTS.LOG_LEVEL,
-  };
+  const input: Partial<Record<VarName, string>> = { SEC_USER_AGENT: env.SEC_USER_AGENT };
+  for (const [name, value] of Object.entries(DEFAULTS)) {
+    input[name as keyof typeof DEFAULTS] = env[name] ?? value;
+  }
   const result = schema(today.toISOString().slice(0, 10)).safeParse(input);
   if (!result.success) {
     const lines = result.error.issues.map((i) => `${String(i.path[0])} ${i.message}`);
@@ -89,5 +121,11 @@ export function loadConfig(
     filingsSince: c.FILINGS_SINCE,
     secRequestTimeoutMs: c.SEC_REQUEST_TIMEOUT_MS,
     logLevel: c.LOG_LEVEL,
+    secBaseUrl: c.SEC_BASE_URL,
+    secArchivesBaseUrl: c.SEC_ARCHIVES_BASE_URL,
+    secMaxRequestsPerSecond: c.SEC_MAX_REQUESTS_PER_SECOND,
+    secMaxRetries: c.SEC_MAX_RETRIES,
+    secRetryBaseDelayMs: c.SEC_RETRY_BASE_DELAY_MS,
+    failedCompanyRetrySeconds: c.FAILED_COMPANY_RETRY_SECONDS,
   };
 }
