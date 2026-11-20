@@ -32,6 +32,7 @@ describe('loadConfig', () => {
       secMaxRetries: 2,
       secRetryBaseDelayMs: 1000,
       failedCompanyRetrySeconds: 300,
+      failedCompanyRetryMaxSeconds: 3600,
     });
   });
 
@@ -49,6 +50,7 @@ describe('loadConfig', () => {
         SEC_MAX_RETRIES: '0',
         SEC_RETRY_BASE_DELAY_MS: '250',
         FAILED_COMPANY_RETRY_SECONDS: '60',
+        FAILED_COMPANY_RETRY_MAX_SECONDS: '600',
       }),
     ).toEqual({
       secUserAgent: UA,
@@ -63,6 +65,7 @@ describe('loadConfig', () => {
       secMaxRetries: 0,
       secRetryBaseDelayMs: 250,
       failedCompanyRetrySeconds: 60,
+      failedCompanyRetryMaxSeconds: 600,
     });
   });
 
@@ -111,6 +114,8 @@ describe('loadConfig', () => {
     ['SEC_RETRY_BASE_DELAY_MS', '99'],
     ['SEC_RETRY_BASE_DELAY_MS', '60001'],
     ['FAILED_COMPANY_RETRY_SECONDS', '9'],
+    ['FAILED_COMPANY_RETRY_MAX_SECONDS', '9'],
+    ['FAILED_COMPANY_RETRY_MAX_SECONDS', '299'],
   ])('rejects %s=%s', (name, value) => {
     expect(errorOf({ SEC_USER_AGENT: UA, [name]: value }).message).toContain(name);
   });

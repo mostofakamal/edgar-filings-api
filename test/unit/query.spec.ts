@@ -207,6 +207,7 @@ describe('findFiling', () => {
     dataAsOf: '2026-11-20T16:30:00Z',
     lastError: null,
     nextFullLoadAt: null,
+    failures: 0,
   });
   const log = { info: jest.fn(), warn: jest.fn(), error: jest.fn() };
 

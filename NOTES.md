@@ -12,6 +12,7 @@ and date filters and pagination, and fetch one filing by accession number.
 | One adapter checks SEC's JSON and rejects a whole bad file | A silently missing 10-K is a wrong answer; a stale company with a visible error is an honest one |
 | Keep the last good data when SEC fails, show its age in `meta.dataAsOf` | Clients decide what age is acceptable; we never hide staleness |
 | At most 5 SEC requests/s, retries only for passing failures, stop on 429/403 | SEC allows 10/s across all our machines and blocks IPs that exceed it |
+| A failing company backs off exponentially (5 min doubling to 1 h); 503s say when to retry | A broken company must not re-download its files every minute, and clients should not poll in vain |
 | Cursor pagination on SEC's own sort order | Page numbers shift when new filings arrive every minute; a position does not |
 | Filter on `filingDate`, also return `acceptanceDateTime` in UTC | `filingDate` is SEC's official Eastern-time date; the two differ on 5,510 rows |
 | Core forms only, primary tickers only | Owner scope; Form 4 and GS's prospectuses are most of SEC's rows but not what was asked for |
@@ -30,6 +31,7 @@ and date filters and pagination, and fetch one filing by accession number.
 | Other forms and tickers (DEF 14A, Form 4, GOOG, FB) | Adding them later is not a breaking change; filtering them out kept the data small (567 rows) |
 | `X-Request-Id` echo, accession numbers without dashes | Small additions, cut to protect the parts that prevent wrong answers |
 | Seeing SEC corrections to filings older than SEC's one-year `recent` window | About 25 extra requests per refresh for a rare event |
+| A latency target | Owner decision; measured baselines are below instead |
 
 ## What we would do next, in priority order
 
@@ -51,7 +53,7 @@ and date filters and pagination, and fetch one filing by accession number.
 | List page latency, one client | p50 0.2 ms, p99 0.7 ms |
 | List page latency, 50 concurrent clients | p50 3.0 ms, p99 7.4 ms, about 15,000 requests/s |
 | Refresh | 6 SEC requests, 1.3–2.6 s, slows requests for at most 27 ms |
-| Tests | 204 unit and 16 end-to-end (no SEC calls), Postman 41/41 against live SEC; `npm audit` 0 |
+| Tests | 211 unit and 16 end-to-end (no SEC calls), Postman 41/41 against live SEC; `npm audit` 0 |
 
 Details: [spec §12](docs/specs/2026-11-20-filings-api-core.md#12-scaling). Where the build
 departed from the plan (TypeScript 6.0.3 because TypeScript 7 drops the compiler API our

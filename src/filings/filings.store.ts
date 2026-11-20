@@ -16,6 +16,8 @@ export interface CompanyState {
   lastError: string | null;
   /** For failed companies: earliest time (epoch ms) to try the full load again. */
   nextFullLoadAt: number | null;
+  /** Consecutive failed full loads; drives the exponential backoff. 0 after a success. */
+  failures: number;
 }
 
 export interface StoreState {
@@ -55,6 +57,7 @@ export class InMemoryFilingsStore implements FilingsStore {
         dataAsOf: null,
         lastError: null,
         nextFullLoadAt: null,
+        failures: 0,
       });
     }
     this.state = this.build(companies, false);

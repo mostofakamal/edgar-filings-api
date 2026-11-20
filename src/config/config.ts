@@ -15,6 +15,8 @@ export interface AppConfig {
   secMaxRetries: number;
   secRetryBaseDelayMs: number;
   failedCompanyRetrySeconds: number;
+  /** Cap for the exponential backoff of a company that keeps failing. */
+  failedCompanyRetryMaxSeconds: number;
 }
 
 export class ConfigError extends Error {
@@ -33,6 +35,7 @@ const DEFAULTS = {
   SEC_MAX_RETRIES: '2',
   SEC_RETRY_BASE_DELAY_MS: '1000',
   FAILED_COMPANY_RETRY_SECONDS: '300',
+  FAILED_COMPANY_RETRY_MAX_SECONDS: '3600',
 } as const;
 
 type VarName = keyof typeof DEFAULTS | 'SEC_USER_AGENT';
@@ -72,31 +75,37 @@ const baseUrl = z
   .transform((s) => s.replace(/\/+$/, ''));
 
 function schema(today: string) {
-  return z.object({
-    SEC_USER_AGENT: z
-      .string({ error: 'is required' })
-      .min(1, 'is required')
-      .refine((s) => s.includes(' ') && s.includes('@'), {
-        message: 'must look like "Company Name contact@domain"',
+  return z
+    .object({
+      SEC_USER_AGENT: z
+        .string({ error: 'is required' })
+        .min(1, 'is required')
+        .refine((s) => s.includes(' ') && s.includes('@'), {
+          message: 'must look like "Company Name contact@domain"',
+        }),
+      PORT: integer(1, 65535),
+      REFRESH_INTERVAL_SECONDS: atLeast(10),
+      FILINGS_SINCE: z
+        .string()
+        .refine(isRealDate, 'must be a real date in YYYY-MM-DD format')
+        .refine((s) => s <= today, 'must not be in the future'),
+      SEC_REQUEST_TIMEOUT_MS: integer(1000, 60000),
+      LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error'], {
+        error: 'must be one of debug, info, warn, error',
       }),
-    PORT: integer(1, 65535),
-    REFRESH_INTERVAL_SECONDS: atLeast(10),
-    FILINGS_SINCE: z
-      .string()
-      .refine(isRealDate, 'must be a real date in YYYY-MM-DD format')
-      .refine((s) => s <= today, 'must not be in the future'),
-    SEC_REQUEST_TIMEOUT_MS: integer(1000, 60000),
-    LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error'], {
-      error: 'must be one of debug, info, warn, error',
-    }),
-    SEC_BASE_URL: baseUrl,
-    SEC_ARCHIVES_BASE_URL: baseUrl,
-    // Capped at 5: half of SEC's 10 per second, which counts all our machines (spec §3).
-    SEC_MAX_REQUESTS_PER_SECOND: integer(1, 5),
-    SEC_MAX_RETRIES: integer(0, 5),
-    SEC_RETRY_BASE_DELAY_MS: integer(100, 60000),
-    FAILED_COMPANY_RETRY_SECONDS: atLeast(10),
-  });
+      SEC_BASE_URL: baseUrl,
+      SEC_ARCHIVES_BASE_URL: baseUrl,
+      // Capped at 5: half of SEC's 10 per second, which counts all our machines (spec §3).
+      SEC_MAX_REQUESTS_PER_SECOND: integer(1, 5),
+      SEC_MAX_RETRIES: integer(0, 5),
+      SEC_RETRY_BASE_DELAY_MS: integer(100, 60000),
+      FAILED_COMPANY_RETRY_SECONDS: atLeast(10),
+      FAILED_COMPANY_RETRY_MAX_SECONDS: atLeast(10),
+    })
+    .refine((c) => c.FAILED_COMPANY_RETRY_MAX_SECONDS >= c.FAILED_COMPANY_RETRY_SECONDS, {
+      path: ['FAILED_COMPANY_RETRY_MAX_SECONDS'],
+      message: 'must not be below FAILED_COMPANY_RETRY_SECONDS',
+    });
 }
 
 /** Reads and checks configuration from environment variables (spec §10). Throws ConfigError listing every problem. */
@@ -127,5 +136,6 @@ export function loadConfig(
     secMaxRetries: c.SEC_MAX_RETRIES,
     secRetryBaseDelayMs: c.SEC_RETRY_BASE_DELAY_MS,
     failedCompanyRetrySeconds: c.FAILED_COMPANY_RETRY_SECONDS,
+    failedCompanyRetryMaxSeconds: c.FAILED_COMPANY_RETRY_MAX_SECONDS,
   };
 }

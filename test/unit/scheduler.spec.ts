@@ -5,7 +5,11 @@ import type { Filing } from '../../src/filings/filing';
 import { COMPANIES, type Ticker } from '../../src/companies';
 import { SecError } from '../../src/sec/sec-client';
 
-const CFG = { refreshIntervalSeconds: 60, failedCompanyRetrySeconds: 300 };
+const CFG = {
+  refreshIntervalSeconds: 60,
+  failedCompanyRetrySeconds: 300,
+  failedCompanyRetryMaxSeconds: 3600,
+};
 const T0 = Date.parse('2026-11-20T16:30:00Z');
 
 const filing = (ticker: Ticker, accessionNumber: string): Filing => ({
@@ -103,12 +107,51 @@ describe('RefreshScheduler.runOnce', () => {
         refresh: h.refresh,
       },
       h.store,
-      { refreshIntervalSeconds: 900, failedCompanyRetrySeconds: 300 },
+      {
+        refreshIntervalSeconds: 900,
+        failedCompanyRetrySeconds: 300,
+        failedCompanyRetryMaxSeconds: 3600,
+      },
       { now: () => T0, setTimeout: () => 0, clearTimeout: () => undefined },
       h.log,
     );
     await s.runOnce();
     expect(h.state('AAPL').nextFullLoadAt).toBe(T0 + 900_000);
+  });
+
+  it('backs off exponentially on consecutive full-load failures, capped at the max', async () => {
+    const h = setup();
+    h.fullLoad.mockImplementation((t) =>
+      Promise.resolve(t === 'GS' ? failure(new SecError('network', 'down')) : success(t)),
+    );
+    const waits: number[] = [];
+    let now = T0;
+    for (let i = 0; i < 6; i++) {
+      await h.scheduler.runOnce();
+      const next = h.state('GS').nextFullLoadAt!;
+      waits.push((next - now) / 1000);
+      h.advance(next - now);
+      now = next;
+    }
+    expect(waits).toEqual([300, 600, 1200, 2400, 3600, 3600]);
+    expect(h.state('GS').failures).toBe(6);
+  });
+
+  it('a success resets the failure count and the backoff', async () => {
+    const h = setup();
+    let aaplCalls = 0;
+    h.fullLoad.mockImplementation((t) =>
+      Promise.resolve(
+        t === 'AAPL' && aaplCalls++ < 2 ? failure(new SecError('network', 'x')) : success(t),
+      ),
+    );
+    await h.scheduler.runOnce();
+    h.advance(300_000);
+    await h.scheduler.runOnce();
+    expect(h.state('AAPL')).toMatchObject({ status: 'failed', failures: 2 });
+    h.advance(600_000);
+    await h.scheduler.runOnce();
+    expect(h.state('AAPL')).toMatchObject({ status: 'loaded', failures: 0, nextFullLoadAt: null });
   });
 
   it('skips a failed company until nextFullLoadAt, then full-loads it again', async () => {

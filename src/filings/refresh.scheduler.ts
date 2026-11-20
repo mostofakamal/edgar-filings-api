@@ -30,7 +30,10 @@ const MAX_TIMER_MS = 2 ** 31 - 1;
 /** What the scheduler needs from the loader. */
 export type CompanyLoader = Pick<Loader, 'fullLoad' | 'refresh'>;
 
-type SchedulerConfig = Pick<AppConfig, 'refreshIntervalSeconds' | 'failedCompanyRetrySeconds'>;
+type SchedulerConfig = Pick<
+  AppConfig,
+  'refreshIntervalSeconds' | 'failedCompanyRetrySeconds' | 'failedCompanyRetryMaxSeconds'
+>;
 
 /**
  * Runs the loader at startup and then on a timer (spec §9.2). Each run starts
@@ -138,6 +141,7 @@ export class RefreshScheduler implements OnApplicationBootstrap, OnModuleDestroy
         dataAsOf: isoSeconds(startedAt),
         lastError: null,
         nextFullLoadAt: null,
+        failures: 0,
       });
       this.log.info(
         { ...line, outcome: 'loaded', rows: result.filings.length },
@@ -161,15 +165,19 @@ export class RefreshScheduler implements OnApplicationBootstrap, OnModuleDestroy
 
   private failed(before: CompanyState, hasData: boolean, error: string, now: number): CompanyState {
     if (hasData) return { ...before, status: 'stale', lastError: error };
-    const waitSeconds = Math.max(
-      this.cfg.failedCompanyRetrySeconds,
-      this.cfg.refreshIntervalSeconds,
+    // Exponential backoff: base, 2 × base, 4 × base, … capped; never shorter than the interval.
+    const failures = before.failures + 1;
+    const backoff = Math.min(
+      this.cfg.failedCompanyRetryMaxSeconds,
+      this.cfg.failedCompanyRetrySeconds * 2 ** (failures - 1),
     );
+    const waitSeconds = Math.max(backoff, this.cfg.refreshIntervalSeconds);
     return {
       ...before,
       status: 'failed',
       lastError: error,
       nextFullLoadAt: now + waitSeconds * 1000,
+      failures,
     };
   }
 }

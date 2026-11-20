@@ -1,11 +1,11 @@
 import { Module } from '@nestjs/common';
-import { FILINGS_STORE, SCHEDULER_DEPS } from '../common/tokens';
+import { CLOCK, FILINGS_STORE, SCHEDULER_DEPS } from '../common/tokens';
 import { SecModule } from '../sec/sec.module';
 import { CompaniesController } from './companies.controller';
 import { FilingsController } from './filings.controller';
 import { InMemoryFilingsStore } from './filings.store';
 import { Loader } from './loader';
-import { FilingsQueryService } from './query.service';
+import { FilingsQueryService, defaultClock } from './query.service';
 import { RefreshScheduler, defaultSchedulerDeps } from './refresh.scheduler';
 
 @Module({
@@ -15,6 +15,7 @@ import { RefreshScheduler, defaultSchedulerDeps } from './refresh.scheduler';
     InMemoryFilingsStore,
     { provide: FILINGS_STORE, useExisting: InMemoryFilingsStore },
     { provide: SCHEDULER_DEPS, useValue: defaultSchedulerDeps },
+    { provide: CLOCK, useValue: defaultClock },
     Loader,
     RefreshScheduler,
     FilingsQueryService,

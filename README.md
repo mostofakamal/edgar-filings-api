@@ -117,7 +117,8 @@ variables in your shell or pass them to Docker. [.env.example](.env.example) lis
 | `SEC_MAX_REQUESTS_PER_SECOND` | `5` | 1–5; SEC's own limit is 10, counted across all your machines |
 | `SEC_MAX_RETRIES` | `2` | Retries (0–5) on timeouts, network errors and 5xx |
 | `SEC_RETRY_BASE_DELAY_MS` | `1000` | First retry wait; later waits double |
-| `FAILED_COMPANY_RETRY_SECONDS` | `300` | Wait before retrying a company that failed to load |
+| `FAILED_COMPANY_RETRY_SECONDS` | `300` | First wait before retrying a company that failed to load; each further failure doubles it |
+| `FAILED_COMPANY_RETRY_MAX_SECONDS` | `3600` | Longest wait between retries of a failing company |
 
 ## Test
 

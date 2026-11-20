@@ -27,6 +27,7 @@ const loaded = (ticker: Ticker, filings: Filing[]): CompanyState => ({
   dataAsOf: '2026-11-20T16:30:00Z',
   lastError: null,
   nextFullLoadAt: null,
+  failures: 0,
 });
 
 function makeStore() {

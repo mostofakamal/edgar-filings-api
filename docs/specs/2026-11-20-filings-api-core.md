@@ -50,6 +50,7 @@ requests are answered from memory only and **never call SEC**.
 | Other forms (DEF 14A, S-1, 4, 424B2, …) | Owner decision (2026-11-20): core forms only. The brief's "10-K or 8-K" are examples of a filter, so this is a scope cut, not a reading of the brief. Adding forms later is an addition, not a break. |
 | Filtering by `reportDate` | Owner decision (2026-11-20): the date filter uses `filingDate`. `reportDate` is returned so clients can filter on it themselves. |
 | Filing contents (XBRL, documents) | Not asked for. We link to the document on sec.gov. |
+| A latency target (SLO) | Owner decision (2026-11-20): out of scope. Measured baselines are in §12, not commitments. |
 | Database, shared cache, several instances | The brief says in-memory is fine. See [Scaling](#12-scaling). |
 
 ### Next milestone (hardening, not in this spec)
@@ -250,6 +251,7 @@ always sees one consistent state:
     load never makes data look fresher than it is,
   - `lastError`: short text of the last failure, or `null`,
   - `nextFullLoadAt`: for `failed` companies, the earliest time to retry (§9.2),
+  - `failures`: failed full loads in a row, which sets the backoff; 0 after a success,
 - one index for the whole store: accession number → filing. If two companies list the same
   accession, the index keeps the first by ticker order and the store logs a warning.
 
@@ -502,7 +504,7 @@ Bad input lists each problem:
 | 404 | `/problems/company-not-found` | Ticker not supported |
 | 404 | `/problems/filing-not-found` | No filing with that accession number in our data (§7.3) |
 | 404 | `/problems/not-found` | Unknown path |
-| 503 | `/problems/data-unavailable` | Data needed for the answer has not loaded yet. Sent with `Retry-After: <REFRESH_INTERVAL_SECONDS>` |
+| 503 | `/problems/data-unavailable` | Data needed for the answer has not loaded yet. `Retry-After` is the seconds until the company's next full-load attempt, never less than `REFRESH_INTERVAL_SECONDS`. For an accession lookup, the soonest such attempt among the companies without data |
 | 400 | `/problems/invalid-parameter` | Any other client error the framework detects before our code runs (e.g. a malformed URL), with `errors: []` |
 | 500 | `/problems/internal-error` | Bug. Details are logged, never returned |
 
@@ -544,9 +546,12 @@ process started. SEC's response time mostly fits inside the 200 ms spacing.
 fixed interval), the scheduler runs the loader again. For each company in ticker order:
 
 - **`not_loaded` or `failed`:** run the full load (§9.1), but only if `nextFullLoadAt` has
-  passed. After a failed full load, `nextFullLoadAt` = now + `FAILED_COMPANY_RETRY_SECONDS`
-  (default 300, i.e. 5 minutes) or the refresh interval, whichever is longer. This stops a broken company from re-downloading its overflow files
-  every minute (about 26 requests each time for GS).
+  passed. Failed full loads back off exponentially (owner decision, 2026-11-20): after
+  the n-th failure in a row, `nextFullLoadAt` = now + min(`FAILED_COMPANY_RETRY_MAX_SECONDS`,
+  `FAILED_COMPANY_RETRY_SECONDS` × 2^(n−1)), and never less than the refresh interval. With
+  the defaults: 5, 10, 20, 40 minutes, then every 60 minutes. A success resets the count.
+  This stops a broken company from re-downloading its overflow files every minute (about 26
+  requests each time for GS).
 - **`loaded` or `stale`:** download and check only the `recent` file (1 request), then merge:
 
   > Let `R` be the oldest `filingDate` in the **new** `recent` file.
@@ -715,8 +720,9 @@ Rejecting the whole file rather than dropping one bad row is deliberate: a silen
 
 The service is **ready once every company has been tried once** (each request with its
 retries, §9.3) and at least one has loaded. A company that failed returns 503
-`data-unavailable` on its own endpoints, and its full load is tried again every
-`FAILED_COMPANY_RETRY_SECONDS` (default 5 minutes, §9.2). The other companies are served.
+`data-unavailable` on its own endpoints, with `Retry-After` set to the time until its
+next attempt; its full load is retried with exponential backoff (§9.2). The other
+companies are served.
 
 We chose this over "ready only when all six have loaded" because, with whole-file
 rejection, one bad GS file would otherwise keep every new instance out of service,
@@ -741,7 +747,7 @@ stateDiagram-v2
         not_loaded --> loaded: full load succeeds
         not_loaded --> failed: full load fails
         failed --> loaded: full load succeeds on a later run
-        failed --> failed: fails again (retry after FAILED_COMPANY_RETRY_SECONDS)
+        failed --> failed: fails again (backoff doubles, up to the max)
         loaded --> loaded: refresh succeeds (new dataAsOf)
         loaded --> stale: refresh fails (keeps old data)
         stale --> loaded: refresh succeeds
@@ -772,7 +778,8 @@ invalid.
 | `SEC_MAX_REQUESTS_PER_SECOND` | no | `5` | Integer 1–5 (never above half of SEC's 10) |
 | `SEC_MAX_RETRIES` | no | `2` | Integer 0–5 |
 | `SEC_RETRY_BASE_DELAY_MS` | no | `1000` | Integer 100–60000; later waits double |
-| `FAILED_COMPANY_RETRY_SECONDS` | no | `300` | Integer, at least 10 |
+| `FAILED_COMPANY_RETRY_SECONDS` | no | `300` | Integer, at least 10. First wait after a failed full load |
+| `FAILED_COMPANY_RETRY_MAX_SECONDS` | no | `3600` | Integer, at least 10 and not below `FAILED_COMPANY_RETRY_SECONDS`. Cap of the doubling waits |
 
 A `.env.example` file lists them. `.env` files are not loaded automatically; Docker and
 the shell pass variables in.
@@ -801,7 +808,7 @@ One JSON object per line on stdout.
 | Unit: client | Exact request headers; each error type in §9.3, including a 403 HTML body and a non-JSON body; timeout; retry table (retried twice on 503 then succeeds; never retried on 429, 403, 404); retry waits stay inside 1 s / 2 s ±25% (fake timers) |
 | Unit: adapter | Parallel arrays to objects; `""` to `null`; milliseconds removed; each rejection rule in §9.3 (including a bad `files[]` name and a duplicate accession); non-core rows skipped; URL building with and without a folder |
 | Unit: loader and merge | Overflow stop rule (`recent` already old enough; stop after first older file; list ends); `FILINGS_SINCE` and form filter on load **and** refresh; a failed file means nothing loads; each row of the §9.2 worked example; a row whose `filingDate` changed across `R` is not duplicated |
-| Unit: scheduler | Runs never overlap; a failing company becomes stale and the others still refresh; a failed company waits `FAILED_COMPANY_RETRY_SECONDS` (or the interval, if longer) before its next full load; 429/403 stop the run and `Retry-After` is honoured |
+| Unit: scheduler | Runs never overlap; a failing company becomes stale and the others still refresh; a failed company backs off exponentially (300, 600, 1,200, 2,400, then 3,600 s with the defaults) and resets after a success; 429/403 stop the run and `Retry-After` is honoured |
 | Unit: query and cursor | Sort order with ties; each filter; `filedTo` before `FILINGS_SINCE`; `limit + 1` so the last page has `nextCursor: null`; cursor round trip; same filters in a different order accepted; changed filters and broken cursors rejected; a new filing added between pages causes no duplicate or skip |
 | Unit: config | Each rule in §10, including the missing `SEC_USER_AGENT` |
 | E2E (Jest, HTTP) | One success and one error per endpoint against the Nest app and the fake SEC client; problem+json content type; readiness before and after the first pass |

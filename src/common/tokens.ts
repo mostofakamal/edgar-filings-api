@@ -8,3 +8,4 @@ export const SEC_CLIENT_DEPS = Symbol('SEC_CLIENT_DEPS');
 export const SEC_SOURCE = Symbol('SEC_SOURCE');
 export const FILINGS_STORE = Symbol('FILINGS_STORE');
 export const SCHEDULER_DEPS = Symbol('SCHEDULER_DEPS');
+export const CLOCK = Symbol('CLOCK');
