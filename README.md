@@ -74,13 +74,16 @@ curl http://localhost:3000/health/ready
 
 ### 5. Run in Docker
 
+Create `.env` from the example and set your SEC user agent:
+
 ```sh
-docker build -t filings-api .
-docker run --rm -p 3000:3000 -e SEC_USER_AGENT filings-api
+cp .env.example .env
+# Edit .env and set SEC_USER_AGENT to your company name and contact email.
+docker compose up --build
 ```
 
-`-e SEC_USER_AGENT` passes the value you exported in step 3. If port 3000 is taken, map
-another one, e.g. `-p 3001:3000`.
+The Compose service loads `.env` into the container and publishes the configured `PORT`
+(3000 by default). Stop it with Ctrl+C; run `docker compose down` to remove the container.
 
 ## Use the API
 
@@ -103,8 +106,9 @@ SEC. Errors are `application/problem+json`; the error types are listed in spec Â
 
 ## Configuration
 
-All configuration comes from environment variables. `.env` files are not read; set the
-variables in your shell or pass them to Docker. [.env.example](.env.example) lists them.
+All configuration comes from environment variables. The application does not read `.env`
+files itself; Docker Compose can load the root `.env` file into the container.
+[.env.example](.env.example) lists the available variables.
 
 | Variable | Default | Meaning |
 |---|---|---|
